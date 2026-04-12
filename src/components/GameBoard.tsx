@@ -245,10 +245,20 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
 
       {/* Scoreboard / Players */}
       <div className="flex justify-center gap-4 mb-8 overflow-x-auto no-scrollbar py-2">
-        {gameState.players.map((player, idx) => (
-          <div key={player.id} className={`flex flex-col items-center transition-all min-w-[80px] ${idx === gameState.currentPlayerIndex ? 'scale-110' : 'opacity-60'}`}>
-            <div className={`relative w-16 h-24 rounded-lg border-2 ${idx === gameState.currentPlayerIndex ? 'border-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.5)]' : 'border-white/20'} bg-slate-800 flex items-center justify-center overflow-hidden`}>
-              <div className="text-2xl font-bold">{player.hand.length}</div>
+        {gameState.players.map((player, idx) => {
+          const isCurrentPlayer = idx === gameState.currentPlayerIndex;
+          const isLastCard = player.hand.length === 1;
+          const showPulse = isLastCard && !isCurrentPlayer;
+          const showCount = settings.mode === 'classic' || isCurrentPlayer;
+
+          return (
+            <div key={player.id} className={`flex flex-col items-center transition-all min-w-[80px] ${isCurrentPlayer ? 'scale-110' : 'opacity-60'}`}>
+              <div className={`relative w-16 h-24 rounded-lg border-2 bg-slate-800 flex items-center justify-center overflow-hidden transition-all ${
+                isCurrentPlayer ? "border-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.5)]" : "border-white/20"
+              } ${showPulse ? "animate-purple-pulse border-purple-500" : ""}`}>
+                <div className="text-2xl font-bold">
+                  {showCount ? player.hand.length : '?'}
+                </div>
               
               {/* AI Thinking Indicator */}
               {player.isAI && idx === gameState.currentPlayerIndex && isAiThinking && (
@@ -282,7 +292,8 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
               <div className="text-[10px] text-emerald-300 font-black">{player.score} pts</div>
             </div>
           </div>
-        ))}
+        );
+      })}
       </div>
 
       {/* Center Area */}

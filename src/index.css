@@ -12,6 +12,16 @@
   }
 }
 
+@keyframes purple-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.7); border-color: rgba(168, 85, 247, 1); }
+  70% { box-shadow: 0 0 0 10px rgba(168, 85, 247, 0); border-color: rgba(168, 85, 247, 0.5); }
+  100% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0); border-color: rgba(168, 85, 247, 1); }
+}
+
+.animate-purple-pulse {
+  animation: purple-pulse 1.5s infinite;
+}
+
 /* Custom scrollbar for card hands */
 .no-scrollbar::-webkit-scrollbar {
   display: none;
