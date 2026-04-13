@@ -40,6 +40,10 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
   const drawPileRef = useRef<HTMLDivElement>(null);
   const discardPileRef = useRef<HTMLDivElement>(null);
 
+  const [isShaking, setIsShaking] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const emojis = ['👍', '👎', '🔥', '😂', '😮', '🃏', '👏', '👋'];
+
   const currentPlayer = gameState.players[gameState.currentPlayerIndex];
   const isHumanTurn = settings.playMode === 'online' 
     ? (auth.currentUser?.uid === currentPlayer.id)
@@ -232,6 +236,21 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
     }
   }, [gameState.currentPlayerIndex, settings.playMode]);
 
+  const triggerShake = () => {
+    setIsShaking(true);
+    setTimeout(() => setIsShaking(false), 500);
+  };
+
+  const sendEmoji = (emoji: string) => {
+    const emojiData = {
+      senderId: auth.currentUser?.uid || 'p1',
+      emoji,
+      timestamp: Date.now()
+    };
+    handleUpdate({ ...gameState, lastEmoji: emojiData });
+    setShowEmojiPicker(false);
+  };
+
   const handleCardClick = (cardId: string) => {
     if (!isHumanTurn || gameState.gameStatus !== 'playing') return;
 
@@ -242,6 +261,11 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
       setPendingCardId(cardId);
       setShowSuitSelector(true);
     } else {
+      // Trigger shake for power cards
+      if (['2', '8', 'BJ'].includes(card.rank)) {
+        triggerShake();
+      }
+
       setPlayAnimation({
         card,
         start: getPlayStartPos(gameState.currentPlayerIndex)
@@ -297,6 +321,7 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
 
   const handleRankSelect = (rank: Rank) => {
     if (pendingCardId && selectedSuit) {
+      triggerShake(); // RJ always shakes
       let nextState = playCard(gameState, gameState.currentPlayerIndex, pendingCardId, settings, selectedSuit, rank);
       
       // Check if they forgot to declare Last Card
@@ -333,8 +358,16 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
   };
 
   const getGlowColor = () => {
-    if (settings.playMode === 'online') return 'card-glow-red';
-    return settings.mode === 'classic' ? 'card-glow-blue' : 'card-glow-purple';
+    if (gameState.gameStatus !== 'playing') return 'card-glow-blue';
+    
+    // Dynamic glow based on current suit
+    switch (gameState.currentSuit) {
+      case 'hearts': return 'card-glow-red shadow-red-500/20';
+      case 'diamonds': return 'card-glow-red shadow-orange-500/20';
+      case 'clubs': return 'card-glow-blue shadow-slate-500/20';
+      case 'spades': return 'card-glow-blue shadow-blue-500/20';
+      default: return 'card-glow-purple';
+    }
   };
 
   const getAccentColor = () => {
@@ -369,7 +402,7 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
       </div>
 
       {/* Main Card Container */}
-      <div className={`absolute inset-2 sm:inset-6 ${getCardColor()} rounded-[1.5rem] sm:rounded-[2.5rem] p-1 shadow-2xl ${getGlowColor()} card-pattern flex flex-col`}>
+      <div className={`absolute inset-2 sm:inset-6 ${getCardColor()} rounded-[1.5rem] sm:rounded-[2.5rem] p-1 shadow-2xl ${getGlowColor()} card-pattern flex flex-col transition-all duration-500 ${isShaking ? 'animate-shake' : ''}`}>
         <div className="absolute inset-3 border-2 border-white/10 rounded-[1.2rem] sm:rounded-[2.2rem] pointer-events-none" />
         
         <div className="flex-1 bg-slate-900/90 backdrop-blur-xl rounded-[1.4rem] sm:rounded-[2.4rem] flex flex-col relative">
@@ -397,7 +430,7 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
             </div>
 
             {/* Top Section: Scoreboard / Players (Smaller) */}
-            <div className="h-[10%] md:h-[12%] flex justify-center gap-2 sm:gap-4 mb-2 overflow-x-auto no-scrollbar py-1 shrink-0">
+            <div className="h-[20%] flex justify-center gap-2 sm:gap-4 mb-2 overflow-x-auto no-scrollbar py-1 shrink-0">
               {gameState.players.map((player, idx) => {
                 const isCurrentPlayer = idx === gameState.currentPlayerIndex;
                 const isLastCard = player.hand.length === 1;
@@ -433,6 +466,20 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
                         <div className="text-[6px] font-black uppercase tracking-tighter text-white/40">Thinking</div>
                       </motion.div>
                     )}
+
+                    {/* Emoji Reaction */}
+                    <AnimatePresence>
+                      {gameState.lastEmoji && gameState.lastEmoji.senderId === player.id && Date.now() - gameState.lastEmoji.timestamp < 3000 && (
+                        <motion.div
+                          initial={{ scale: 0, y: 0, opacity: 0 }}
+                          animate={{ scale: 1.5, y: -40, opacity: 1 }}
+                          exit={{ scale: 0, opacity: 0 }}
+                          className="absolute inset-0 flex items-center justify-center pointer-events-none z-[100]"
+                        >
+                          <span className="text-2xl drop-shadow-lg">{gameState.lastEmoji.emoji}</span>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                   <div className="mt-0.5 text-center">
                     <div className="text-[7px] font-black truncate w-12 sm:w-16 flex flex-col items-center uppercase tracking-tighter opacity-60">
@@ -449,7 +496,7 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
             </div>
 
           {/* Middle Section: Gameplay Area (Draw/Discard) */}
-          <div className="flex-1 flex items-center justify-center gap-6 sm:gap-20 relative min-h-0">
+          <div className="h-[40%] flex items-center justify-center gap-6 sm:gap-20 relative min-h-0">
             {/* Black Joker Target (Minimalist) */}
             {settings.mode === 'ultimate' && gameState.blackJokerTargetCard && (
               <div className="absolute left-2 sm:left-10 top-1/2 -translate-y-1/2 flex flex-col items-center bg-slate-800/20 p-1.5 rounded-xl border border-white/5 backdrop-blur-sm scale-75 shadow-lg">
@@ -461,7 +508,7 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
             )}
 
             {/* Draw Pile */}
-            <div ref={drawPileRef} className="relative group scale-[0.6] sm:scale-[0.8] md:scale-100 lg:scale-110">
+            <div ref={drawPileRef} className="relative group scale-[0.9] sm:scale-[1.2] md:scale-[1.4] lg:scale-[1.6]">
               {/* Stack effect */}
               {Array.from({ length: Math.min(3, Math.ceil(gameState.drawPile.length / 15)) }).map((_, i) => (
                 <div 
@@ -502,7 +549,7 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
             </div>
 
             {/* Discard Pile */}
-            <div ref={discardPileRef} className="relative scale-[0.6] sm:scale-[0.8] md:scale-100 lg:scale-110">
+            <div ref={discardPileRef} className="relative scale-[0.9] sm:scale-[1.2] md:scale-[1.4] lg:scale-[1.6]">
               {/* Stack effect */}
               {gameState.discardPile.length > 1 && (
                 <div className="absolute inset-0 bg-slate-800 rounded-xl border border-white/10 shadow-sm translate-x-1 translate-y-1 -z-10" />
@@ -549,16 +596,49 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
           </div>
 
           {/* Bottom Section: Player Hand */}
-          <div className="h-[20%] md:h-[25%] p-1 sm:p-2 z-20 shrink-0">
+          <div className="h-[40%] p-1 sm:p-2 z-20 shrink-0 relative">
             <div className="max-w-5xl mx-auto relative h-full flex flex-col justify-end">
-              {/* Turn Indicator */}
-              <div className="absolute -top-6 left-1/2 -translate-x-1/2">
-                <div className={`px-3 py-0.5 rounded-full font-black italic text-[8px] tracking-[0.2em] uppercase border transition-all ${
+              {/* Turn Indicator - Moved lower to avoid overlap */}
+              <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30">
+                <div className={`px-4 py-1 rounded-full font-black italic text-[9px] tracking-[0.2em] uppercase border transition-all shadow-xl ${
                   isHumanTurn 
-                  ? `bg-white text-slate-900 border-white shadow-md scale-105` 
-                  : "bg-slate-900/50 text-white/30 border-white/5 backdrop-blur-sm"
+                  ? `bg-white text-slate-900 border-white scale-110 ring-4 ring-white/10` 
+                  : "bg-slate-900/80 text-white/40 border-white/10 backdrop-blur-md"
                 }`}>
-                  {isHumanTurn ? "Your Turn" : `${currentPlayer.name}'s Turn`}
+                  {isHumanTurn ? "⚡ YOUR TURN ⚡" : `${currentPlayer.name}'s Turn`}
+                </div>
+              </div>
+
+              {/* Quick Chat Button */}
+              <div className="absolute top-0 right-0 z-50">
+                <div className="relative">
+                  <button
+                    onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                    className="w-8 h-8 rounded-full bg-slate-800/80 border border-white/10 flex items-center justify-center hover:bg-slate-700 transition-colors shadow-lg"
+                  >
+                    <span className="text-sm">💬</span>
+                  </button>
+                  
+                  <AnimatePresence>
+                    {showEmojiPicker && (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.8, y: 10 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.8, y: 10 }}
+                        className="absolute bottom-full right-0 mb-2 p-2 bg-slate-800/95 backdrop-blur-md rounded-2xl border border-white/10 shadow-2xl flex gap-2"
+                      >
+                        {emojis.map(emoji => (
+                          <button
+                            key={emoji}
+                            onClick={() => sendEmoji(emoji)}
+                            className="w-8 h-8 flex items-center justify-center hover:bg-white/10 rounded-lg transition-colors text-lg"
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
               </div>
 
@@ -566,6 +646,7 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
                 {displayPlayer.hand.map((card, i) => {
                   const moveInfo = isValidMove(card, gameState, settings);
                   const isPlayable = isHumanTurn && moveInfo.valid;
+                  const showTraining = settings.trainingMode;
                   
                   return (
                     <motion.div
@@ -580,8 +661,9 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
                         card={card} 
                         isFaceUp={true} 
                         isPlayable={isPlayable}
+                        showTraining={settings.trainingMode}
                         onClick={() => handleCardClick(card.id)}
-                        className={`scale-[0.7] sm:scale-[0.85] md:scale-100 origin-bottom ${!isPlayable && isHumanTurn ? 'opacity-40 grayscale-[0.8]' : ''} ${isPlayable ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-900' : ''}`}
+                        className={`scale-[0.7] sm:scale-[0.85] md:scale-100 origin-bottom ${settings.trainingMode && isPlayable ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-900' : ''}`}
                       />
                     </motion.div>
                   );

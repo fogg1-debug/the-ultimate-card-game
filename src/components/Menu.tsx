@@ -3,16 +3,17 @@ import { GameMode, GameSettings, PlayMode, Difficulty } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { Settings, Play, Users, Layers, Monitor, User, Globe, Plus, LogIn, ArrowLeft, RefreshCw } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
-import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
 import { collection, addDoc, onSnapshot, doc, updateDoc, query, where, getDocs, serverTimestamp } from 'firebase/firestore';
 
 import { getInitialGameState } from '../lib/gameUtils';
 
 interface MenuProps {
   onStart: (settings: GameSettings, playerNames: string[], initialOnlineState?: any) => void;
+  winStreak: number;
 }
 
-export function Menu({ onStart }: MenuProps) {
+export function Menu({ onStart, winStreak }: MenuProps) {
   const [mode, setMode] = useState<GameMode>('classic');
   const [playMode, setPlayMode] = useState<PlayMode>('computer');
   const [difficulty, setDifficulty] = useState<Difficulty>('normal');
@@ -20,6 +21,7 @@ export function Menu({ onStart }: MenuProps) {
   const [numDecks, setNumDecks] = useState<1 | 2>(1);
   const [startingScore, setStartingScore] = useState(101);
   const [cardsPerPlayer, setCardsPerPlayer] = useState(7);
+  const [trainingMode, setTrainingMode] = useState(false);
   
   // Online States
   const [onlineView, setOnlineView] = useState<'main' | 'host' | 'join' | 'lobby'>('main');
@@ -28,6 +30,7 @@ export function Menu({ onStart }: MenuProps) {
   const [user, setUser] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [lobbyIdInput, setLobbyIdInput] = useState('');
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -54,6 +57,7 @@ export function Menu({ onStart }: MenuProps) {
           const data = doc.data();
           setCurrentLobby({ id: doc.id, ...data });
           if (data.status === 'playing' && data.gameState) {
+            console.log("Game starting online...", data.gameState);
             const settingsWithLobby = { ...data.settings, lobbyId: doc.id };
             onStart(settingsWithLobby, data.players.map((p: any) => p.name), data.gameState);
           }
@@ -69,7 +73,7 @@ export function Menu({ onStart }: MenuProps) {
       : Array.from({ length: numPlayers }, (_, i) => `Player ${i + 1}`);
     
     onStart(
-      { mode, playMode, difficulty, numDecks, startingScore, cardsPerPlayer },
+      { mode, playMode, difficulty, numDecks, startingScore, cardsPerPlayer, trainingMode },
       playerNames
     );
   };
@@ -77,12 +81,19 @@ export function Menu({ onStart }: MenuProps) {
   const handleOnlineClick = async () => {
     setPlayMode('online');
     setOnlineView('main');
+    setStatusMessage(null);
     if (!auth.currentUser) {
       setIsLoading(true);
       try {
-        await signInAnonymously(auth);
-      } catch (err) {
+        const provider = new GoogleAuthProvider();
+        await signInWithPopup(auth, provider);
+      } catch (err: any) {
         console.error("Auth failed", err);
+        if (err.code === 'auth/admin-restricted-operation') {
+          setStatusMessage("Sign-in is restricted. Please ensure Google Auth is enabled in Firebase Console.");
+        } else {
+          setStatusMessage("Authentication failed. Please check your connection.");
+        }
       } finally {
         setIsLoading(false);
       }
@@ -90,48 +101,83 @@ export function Menu({ onStart }: MenuProps) {
   };
 
   const hostLobby = async () => {
-    if (!auth.currentUser) return;
+    if (!auth.currentUser) {
+      setStatusMessage("You must be signed in to host a game.");
+      return;
+    }
     setIsLoading(true);
+    setStatusMessage("Creating lobby...");
     try {
       const lobbyData = {
         hostId: auth.currentUser.uid,
         hostName: `Player ${auth.currentUser.uid.slice(0, 4)}`,
         status: 'waiting',
-        settings: { mode, playMode: 'online', difficulty, numDecks, startingScore, cardsPerPlayer },
+        settings: { mode, playMode: 'online', difficulty, numDecks, startingScore, cardsPerPlayer, trainingMode },
         players: [{ id: auth.currentUser.uid, name: `Player ${auth.currentUser.uid.slice(0, 4)}`, isHost: true }],
         createdAt: serverTimestamp(),
       };
       const docRef = await addDoc(collection(db, 'lobbies'), lobbyData);
       setCurrentLobby({ id: docRef.id, ...lobbyData });
       setOnlineView('lobby');
+      setStatusMessage(null);
     } catch (err) {
       console.error("Failed to host lobby", err);
+      setStatusMessage("Failed to create lobby. Check Firebase rules or connection.");
     } finally {
       setIsLoading(false);
     }
   };
 
   const joinLobby = async (lobby: any) => {
-    if (!auth.currentUser) return;
+    if (!auth.currentUser) {
+      setStatusMessage("You must be signed in to join a game.");
+      return;
+    }
     if (lobby.players.length >= 4) {
-      alert("Lobby is full");
+      setStatusMessage("Lobby is full (max 4 players).");
       return;
     }
     
-    // Check if I'm already in the lobby
-    const isAlreadyIn = lobby.players.some((p: any) => p.id === auth.currentUser?.uid);
-    
-    if (!isAlreadyIn) {
-      const updatedPlayers = [...lobby.players, { id: auth.currentUser.uid, name: `Player ${auth.currentUser.uid.slice(0, 4)}`, isHost: false }];
-      await updateDoc(doc(db, 'lobbies', lobby.id), {
-        players: updatedPlayers
-      });
-      setCurrentLobby({ ...lobby, players: updatedPlayers });
-    } else {
-      setCurrentLobby(lobby);
+    setIsLoading(true);
+    try {
+      // Check if I'm already in the lobby
+      const isAlreadyIn = lobby.players.some((p: any) => p.id === auth.currentUser?.uid);
+      
+      if (!isAlreadyIn) {
+        const updatedPlayers = [...lobby.players, { id: auth.currentUser.uid, name: `Player ${auth.currentUser.uid.slice(0, 4)}`, isHost: false }];
+        await updateDoc(doc(db, 'lobbies', lobby.id), {
+          players: updatedPlayers
+        });
+        setCurrentLobby({ ...lobby, players: updatedPlayers });
+      } else {
+        setCurrentLobby(lobby);
+      }
+      
+      setOnlineView('lobby');
+      setStatusMessage(null);
+    } catch (err) {
+      console.error("Failed to join lobby", err);
+      setStatusMessage("Failed to join lobby.");
+    } finally {
+      setIsLoading(false);
     }
-    
-    setOnlineView('lobby');
+  };
+
+  const refreshLobbies = async () => {
+    setIsLoading(true);
+    try {
+      const q = query(collection(db, 'lobbies'), where('status', '==', 'waiting'));
+      const snapshot = await getDocs(q);
+      const lobbyList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setLobbies(lobbyList);
+      setStatusMessage("Lobbies refreshed.");
+      setTimeout(() => setStatusMessage(null), 2000);
+    } catch (err) {
+      console.error("Refresh failed", err);
+      setStatusMessage("Failed to refresh lobbies.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const joinLobbyById = async () => {
@@ -143,32 +189,42 @@ export function Menu({ onStart }: MenuProps) {
       if (lobby) {
         await joinLobby({ id: lobby.id, ...lobby.data() });
       } else {
-        alert("Lobby not found");
+        setStatusMessage("Lobby not found.");
       }
     } catch (err) {
       console.error("Join by ID failed", err);
+      setStatusMessage("Join failed.");
     } finally {
       setIsLoading(false);
     }
   };
 
   const startGameOnline = async () => {
-    if (!currentLobby || currentLobby.hostId !== user.uid) return;
+    if (!currentLobby || currentLobby.hostId !== auth.currentUser?.uid) return;
     
-    const playerNames = currentLobby.players.map((p: any) => p.name);
-    const initialGameState = getInitialGameState(currentLobby.settings, playerNames);
-    
-    // Assign correct IDs to players in the initial state
-    initialGameState.players = initialGameState.players.map((p, i) => ({
-      ...p,
-      id: currentLobby.players[i].id,
-      isAI: false // Online players are not AI
-    }));
+    setIsLoading(true);
+    setStatusMessage("Starting game...");
+    try {
+      const playerNames = currentLobby.players.map((p: any) => p.name);
+      const initialGameState = getInitialGameState(currentLobby.settings, playerNames);
+      
+      // Assign correct IDs to players in the initial state
+      initialGameState.players = initialGameState.players.map((p, i) => ({
+        ...p,
+        id: currentLobby.players[i].id,
+        isAI: false // Online players are not AI
+      }));
 
-    await updateDoc(doc(db, 'lobbies', currentLobby.id), {
-      status: 'playing',
-      gameState: initialGameState
-    });
+      await updateDoc(doc(db, 'lobbies', currentLobby.id), {
+        status: 'playing',
+        gameState: initialGameState
+      });
+    } catch (err) {
+      console.error("Start game failed", err);
+      setStatusMessage("Failed to start game.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const getCardColor = () => {
@@ -244,6 +300,24 @@ export function Menu({ onStart }: MenuProps) {
               <p className="text-white/60 font-bold text-xs uppercase tracking-[0.2em]">
                 {playMode === 'online' ? 'Online Multiplayer' : mode === 'classic' ? 'Classic Edition' : 'Ultimate Edition'}
               </p>
+              {winStreak > 0 && (
+                <motion.div 
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  className="mt-3 inline-flex items-center gap-2 bg-yellow-400 text-slate-900 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest shadow-lg"
+                >
+                  🔥 {winStreak} Win Streak
+                </motion.div>
+              )}
+              {statusMessage && (
+                <motion.div 
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mt-2 text-[10px] font-black text-red-400 uppercase tracking-widest bg-red-500/10 py-1 px-3 rounded-full border border-red-500/20"
+                >
+                  {statusMessage}
+                </motion.div>
+              )}
             </div>
 
             <div className="flex-1 overflow-y-auto no-scrollbar space-y-6">
@@ -293,6 +367,21 @@ export function Menu({ onStart }: MenuProps) {
 
                   {/* Settings */}
                   <div className="space-y-4 pt-4 border-t border-white/5">
+                    <div className="flex items-center justify-between text-white/80">
+                      <div className="flex items-center gap-2">
+                        <Settings size={16} className="text-white/40" />
+                        <span className="text-xs font-black uppercase tracking-wider">Training Mode</span>
+                      </div>
+                      <button
+                        onClick={() => setTrainingMode(!trainingMode)}
+                        className={`px-4 py-1.5 rounded-xl text-[10px] font-black uppercase transition-all ${
+                          trainingMode ? 'bg-green-500 text-white shadow-lg' : 'bg-white/5 text-white/40 hover:text-white/60'
+                        }`}
+                      >
+                        {trainingMode ? 'YES' : 'NO'}
+                      </button>
+                    </div>
+
                     <div className="flex items-center justify-between text-white/80">
                       <div className="flex items-center gap-2">
                         <Monitor size={16} className="text-white/40" />
@@ -531,7 +620,12 @@ export function Menu({ onStart }: MenuProps) {
                         <div className="flex items-center gap-2 text-red-400 font-black italic">
                           <LogIn size={18} /> JOIN GAME
                         </div>
-                        <button onClick={() => setOnlineView('main')} className="text-white/40 text-[10px] font-black uppercase">Back</button>
+                        <div className="flex items-center gap-2">
+                          <button onClick={refreshLobbies} className="text-white/40 hover:text-white/60 transition-colors">
+                            <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
+                          </button>
+                          <button onClick={() => setOnlineView('main')} className="text-white/40 text-[10px] font-black uppercase">Back</button>
+                        </div>
                       </div>
 
                       <div className="flex gap-2">

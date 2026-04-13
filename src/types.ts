@@ -32,6 +32,7 @@ export interface GameSettings {
   numDecks: 1 | 2;
   startingScore: number;
   cardsPerPlayer: number;
+  trainingMode: boolean;
   lobbyId?: string;
   hostId?: string;
 }
@@ -51,4 +52,5 @@ export interface GameState {
   blackJokerTargetCard: Card | null; // For Ultimate mode Black Joker
   lastActionMessage: string;
   roundNumber: number;
+  lastEmoji?: { senderId: string; emoji: string; timestamp: number };
 }

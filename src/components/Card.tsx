@@ -15,6 +15,7 @@ interface CardProps {
   isPlayable?: boolean;
   isCurrent?: boolean;
   noHover?: boolean;
+  showTraining?: boolean;
   key?: string | number;
 }
 
@@ -34,7 +35,7 @@ const suitColors: Record<Suit, string> = {
   joker: 'text-purple-600',
 };
 
-export function Card({ card, onClick, isFaceUp = true, className, isPlayable, isCurrent, noHover }: CardProps) {
+export function Card({ card, onClick, isFaceUp = true, className, isPlayable, isCurrent, noHover, showTraining }: CardProps) {
   const displaySuit = card.transformedToSuit || card.suit;
   const displayRank = card.transformedToRank || card.rank;
   
@@ -68,7 +69,8 @@ export function Card({ card, onClick, isFaceUp = true, className, isPlayable, is
       onClick={isPlayable ? onClick : undefined}
       className={cn(
         "relative w-20 h-30 sm:w-24 sm:h-36 bg-white rounded-lg sm:rounded-xl border sm:border-2 shadow-xl flex flex-col p-1 sm:p-2 select-none",
-        isPlayable ? "cursor-pointer border-blue-400" : "border-slate-200",
+        isPlayable ? "cursor-pointer" : "",
+        isPlayable && showTraining ? "border-blue-400" : "border-slate-200",
         isCurrent && "border-yellow-400 border-2 sm:border-4",
         className
       )}
@@ -101,7 +103,7 @@ export function Card({ card, onClick, isFaceUp = true, className, isPlayable, is
         </div>
       )}
       
-      {!isPlayable && !isCurrent && <div className="absolute inset-0 bg-black/5 rounded-xl pointer-events-none" />}
+      {showTraining && !isPlayable && !isCurrent && <div className="absolute inset-0 bg-black/5 rounded-xl pointer-events-none" />}
     </motion.div>
   );
 }
