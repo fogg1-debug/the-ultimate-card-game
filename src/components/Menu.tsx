@@ -1,10 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { GameMode, GameSettings, PlayMode, Difficulty } from '../types';
-import { motion } from 'motion/react';
-import { Settings, Play, Users, Layers, Monitor, User } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { Settings, Play, Users, Layers, Monitor, User, Globe, Plus, LogIn, ArrowLeft, RefreshCw } from 'lucide-react';
+import { auth, db } from '../lib/firebase';
+import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { collection, addDoc, onSnapshot, doc, updateDoc, query, where, getDocs, serverTimestamp } from 'firebase/firestore';
+
+import { getInitialGameState } from '../lib/gameUtils';
 
 interface MenuProps {
-  onStart: (settings: GameSettings, playerNames: string[]) => void;
+  onStart: (settings: GameSettings, playerNames: string[], initialOnlineState?: any) => void;
 }
 
 export function Menu({ onStart }: MenuProps) {
@@ -15,6 +20,48 @@ export function Menu({ onStart }: MenuProps) {
   const [numDecks, setNumDecks] = useState<1 | 2>(1);
   const [startingScore, setStartingScore] = useState(101);
   const [cardsPerPlayer, setCardsPerPlayer] = useState(7);
+  
+  // Online States
+  const [onlineView, setOnlineView] = useState<'main' | 'host' | 'join' | 'lobby'>('main');
+  const [lobbies, setLobbies] = useState<any[]>([]);
+  const [currentLobby, setCurrentLobby] = useState<any>(null);
+  const [user, setUser] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [lobbyIdInput, setLobbyIdInput] = useState('');
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (playMode === 'online' && onlineView === 'join') {
+      const q = query(collection(db, 'lobbies'), where('status', '==', 'waiting'));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const lobbyList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setLobbies(lobbyList);
+      });
+      return () => unsubscribe();
+    }
+  }, [playMode, onlineView]);
+
+  useEffect(() => {
+    if (currentLobby) {
+      const unsubscribe = onSnapshot(doc(db, 'lobbies', currentLobby.id), (doc) => {
+        if (doc.exists()) {
+          const data = doc.data();
+          setCurrentLobby({ id: doc.id, ...data });
+          if (data.status === 'playing' && data.gameState) {
+            const settingsWithLobby = { ...data.settings, lobbyId: doc.id };
+            onStart(settingsWithLobby, data.players.map((p: any) => p.name), data.gameState);
+          }
+        }
+      });
+      return () => unsubscribe();
+    }
+  }, [currentLobby?.id]);
 
   const handleStart = () => {
     const playerNames = playMode === 'computer' 
@@ -27,203 +74,428 @@ export function Menu({ onStart }: MenuProps) {
     );
   };
 
+  const handleOnlineClick = async () => {
+    setPlayMode('online');
+    if (!user) {
+      setIsLoading(true);
+      try {
+        await signInAnonymously(auth);
+      } catch (err) {
+        console.error("Auth failed", err);
+      }
+      setIsLoading(false);
+    }
+  };
+
+  const hostLobby = async () => {
+    if (!user) return;
+    setIsLoading(true);
+    const lobbyData = {
+      hostId: user.uid,
+      hostName: `Player ${user.uid.slice(0, 4)}`,
+      status: 'waiting',
+      settings: { mode, playMode: 'online', difficulty, numDecks, startingScore, cardsPerPlayer },
+      players: [{ id: user.uid, name: `Player ${user.uid.slice(0, 4)}`, isHost: true }],
+      createdAt: serverTimestamp(),
+    };
+    const docRef = await addDoc(collection(db, 'lobbies'), lobbyData);
+    setCurrentLobby({ id: docRef.id, ...lobbyData });
+    setOnlineView('lobby');
+    setIsLoading(false);
+  };
+
+  const joinLobby = async (lobby: any) => {
+    if (!user) return;
+    if (lobby.players.length >= 4) return;
+    
+    const updatedPlayers = [...lobby.players, { id: user.uid, name: `Player ${user.uid.slice(0, 4)}`, isHost: false }];
+    await updateDoc(doc(db, 'lobbies', lobby.id), {
+      players: updatedPlayers
+    });
+    setCurrentLobby({ ...lobby, players: updatedPlayers });
+    setOnlineView('lobby');
+  };
+
+  const startGameOnline = async () => {
+    if (!currentLobby || currentLobby.hostId !== user.uid) return;
+    
+    const playerNames = currentLobby.players.map((p: any) => p.name);
+    const initialGameState = getInitialGameState(currentLobby.settings, playerNames);
+    
+    // Assign correct IDs to players in the initial state
+    initialGameState.players = initialGameState.players.map((p, i) => ({
+      ...p,
+      id: currentLobby.players[i].id,
+      isAI: false // Online players are not AI
+    }));
+
+    await updateDoc(doc(db, 'lobbies', currentLobby.id), {
+      status: 'playing',
+      gameState: initialGameState
+    });
+  };
+
+  const getCardColor = () => {
+    if (playMode === 'online') return 'bg-red-600';
+    return mode === 'classic' ? 'bg-blue-600' : 'bg-purple-600';
+  };
+
+  const getGlowColor = () => {
+    if (playMode === 'online') return 'card-glow-red';
+    return mode === 'classic' ? 'card-glow-blue' : 'card-glow-purple';
+  };
+
   return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-      <motion.div 
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="max-w-md w-full bg-slate-800 rounded-3xl p-8 shadow-2xl border border-slate-700"
-      >
-        <div className="text-center mb-8">
-          <h1 className="text-5xl font-black text-white mb-2 tracking-tighter">SWITCH</h1>
-          <p className="text-slate-400 font-medium">The Ultimate Card Game</p>
-        </div>
-
-        <div className="space-y-6">
-          {/* Mode Selection */}
-          <div className="grid grid-cols-2 gap-4">
-            <button
-              onClick={() => {
-                setMode('classic');
-                setStartingScore(101);
-                setCardsPerPlayer(7);
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 overflow-hidden">
+      {/* Background Decorative Cards */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <AnimatePresence mode="popLayout">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <motion.div
+              key={`${mode}-${playMode}-${i}`}
+              initial={{ 
+                x: Math.random() * 1000 - 500, 
+                y: Math.random() * 1000 + 500, 
+                rotate: Math.random() * 360,
+                opacity: 0 
               }}
-              className={`p-4 rounded-2xl border-2 transition-all ${
-                mode === 'classic' 
-                ? 'border-blue-500 bg-blue-500/10 text-white' 
-                : 'border-slate-700 text-slate-400 hover:border-slate-600'
-              }`}
-            >
-              <div className="font-bold text-lg">Classic</div>
-              <div className="text-xs opacity-60">Standard rules</div>
-            </button>
-            <button
-              onClick={() => setMode('ultimate')}
-              className={`p-4 rounded-2xl border-2 transition-all ${
-                mode === 'ultimate' 
-                ? 'border-purple-500 bg-purple-500/10 text-white' 
-                : 'border-slate-700 text-slate-400 hover:border-slate-600'
-              }`}
-            >
-              <div className="font-bold text-lg">Ultimate</div>
-              <div className="text-xs opacity-60">Jokers & chaos</div>
-            </button>
-          </div>
+              animate={{ 
+                x: (i - 2) * 300, 
+                y: (i % 2 === 0 ? -200 : 200), 
+                rotate: (i - 2) * 15,
+                opacity: 0.1
+              }}
+              exit={{ 
+                x: Math.random() * 1000 - 500, 
+                y: -1000, 
+                rotate: Math.random() * 360,
+                opacity: 0 
+              }}
+              transition={{ 
+                type: "spring", 
+                damping: 20, 
+                stiffness: 50,
+                delay: i * 0.05 
+              }}
+              className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-96 ${getCardColor()} rounded-3xl border border-white/10 card-pattern`}
+            />
+          ))}
+        </AnimatePresence>
+      </div>
 
-          <div className="space-y-4">
-            <div className="flex items-center justify-between text-white">
-              <div className="flex items-center gap-2">
-                <Monitor size={18} className="text-blue-400" />
-                <span className="font-medium">Play Mode</span>
-              </div>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => setPlayMode('computer')}
-                  className={`px-3 py-1 rounded-lg font-bold transition-all text-xs ${
-                    playMode === 'computer' ? 'bg-blue-500 text-white' : 'bg-slate-700 text-slate-400'
-                  }`}
-                >
-                  VS CPU
-                </button>
-                <button
-                  onClick={() => setPlayMode('local')}
-                  className={`px-3 py-1 rounded-lg font-bold transition-all text-xs ${
-                    playMode === 'local' ? 'bg-blue-500 text-white' : 'bg-slate-700 text-slate-400'
-                  }`}
-                >
-                  Local
-                </button>
-              </div>
-            </div>
-
-            {playMode === 'computer' && (
-              <div className="flex items-center justify-between text-white">
-                <div className="flex items-center gap-2">
-                  <Settings size={18} className="text-blue-400" />
-                  <span className="font-medium">Difficulty</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  {(['easy', 'normal', 'hard'] as Difficulty[]).map(d => (
-                    <button
-                      key={d}
-                      onClick={() => setDifficulty(d)}
-                      className={`px-2 py-1 rounded-lg font-bold transition-all text-[10px] uppercase ${
-                        difficulty === d ? 'bg-blue-500 text-white' : 'bg-slate-700 text-slate-400'
-                      }`}
-                    >
-                      {d}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="flex items-center justify-between text-white">
-              <div className="flex items-center gap-2">
-                <Users size={18} className="text-blue-400" />
-                <span className="font-medium">Players</span>
-              </div>
-              <div className="flex items-center gap-3">
-                {[2, 3, 4].map(n => (
-                  <button
-                    key={n}
-                    onClick={() => setNumPlayers(n)}
-                    className={`w-8 h-8 rounded-lg font-bold transition-all ${
-                      numPlayers === n ? 'bg-blue-500 text-white' : 'bg-slate-700 text-slate-400'
-                    }`}
-                  >
-                    {n}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between text-white">
-              <div className="flex items-center gap-2">
-                <Layers size={18} className="text-blue-400" />
-                <span className="font-medium">Decks</span>
-              </div>
-              <div className="flex items-center gap-3">
-                {[1, 2].map(n => (
-                  <button
-                    key={n}
-                    onClick={() => setNumDecks(n as 1 | 2)}
-                    className={`w-8 h-8 rounded-lg font-bold transition-all ${
-                      numDecks === n ? 'bg-blue-500 text-white' : 'bg-slate-700 text-slate-400'
-                    }`}
-                  >
-                    {n}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {mode === 'classic' && (
-              <div className="flex items-center justify-between text-white">
-                <div className="flex items-center gap-2">
-                  <Layers size={18} className="text-blue-400" />
-                  <span className="font-medium">Cards Dealt</span>
-                </div>
-                <div className="flex items-center gap-3">
-                  {[4, 7].map(n => (
-                    <button
-                      key={n}
-                      onClick={() => setCardsPerPlayer(n)}
-                      className={`w-8 h-8 rounded-lg font-bold transition-all ${
-                        cardsPerPlayer === n ? 'bg-blue-500 text-white' : 'bg-slate-700 text-slate-400'
-                      }`}
-                    >
-                      {n}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {mode === 'ultimate' && (
-              <>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-white text-sm font-medium">
-                    <span>Starting Score</span>
-                    <span className="text-purple-400">{startingScore}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="50"
-                    max="500"
-                    step="10"
-                    value={startingScore}
-                    onChange={(e) => setStartingScore(parseInt(e.target.value))}
-                    className="w-full accent-purple-500"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-white text-sm font-medium">
-                    <span>Cards Dealt</span>
-                    <span className="text-purple-400">{cardsPerPlayer}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="4"
-                    max="10"
-                    value={cardsPerPlayer}
-                    onChange={(e) => setCardsPerPlayer(parseInt(e.target.value))}
-                    className="w-full accent-purple-500"
-                  />
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-
-        <button
-          onClick={handleStart}
-          className="w-full mt-10 bg-white text-slate-900 py-4 rounded-2xl font-black text-xl flex items-center justify-center gap-2 hover:bg-blue-50 transition-colors shadow-xl"
+      <AnimatePresence mode="wait">
+        <motion.div 
+          key={`${mode}-${playMode}-${onlineView}`}
+          initial={{ opacity: 0, scale: 0.9, rotateY: 90 }}
+          animate={{ opacity: 1, scale: 1, rotateY: 0 }}
+          exit={{ opacity: 0, scale: 1.1, rotateY: -90 }}
+          transition={{ type: "spring", damping: 20, stiffness: 100 }}
+          className={`relative max-w-md w-full aspect-[2/3] ${getCardColor()} rounded-[2.5rem] p-1 shadow-2xl ${getGlowColor()} card-pattern`}
         >
-          <Play fill="currentColor" size={20} />
-          START GAME
-        </button>
-      </motion.div>
+          {/* Card Inner Border */}
+          <div className="absolute inset-4 border-2 border-white/20 rounded-[1.8rem] pointer-events-none" />
+          
+          {/* Main Content Area */}
+          <div className="h-full w-full bg-slate-900/90 backdrop-blur-md rounded-[2.3rem] p-8 flex flex-col">
+            <div className="text-center mb-6">
+              <motion.h1 
+                layoutId="title"
+                className="text-6xl font-black text-white mb-1 tracking-tighter italic"
+              >
+                SWITCH
+              </motion.h1>
+              <div className="h-1 w-24 bg-white/20 mx-auto rounded-full mb-2" />
+              <p className="text-white/60 font-bold text-xs uppercase tracking-[0.2em]">
+                {playMode === 'online' ? 'Online Multiplayer' : mode === 'classic' ? 'Classic Edition' : 'Ultimate Edition'}
+              </p>
+            </div>
+
+            <div className="flex-1 overflow-y-auto no-scrollbar space-y-6">
+              {playMode !== 'online' ? (
+                <>
+                  {/* Mode Selection */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      onClick={() => { setMode('classic'); setPlayMode('computer'); }}
+                      className={`relative overflow-hidden p-4 rounded-2xl border-2 transition-all ${
+                        mode === 'classic' && playMode !== 'online'
+                        ? 'border-blue-400 bg-blue-500/20 text-white' 
+                        : 'border-white/10 text-white/40 hover:border-white/20'
+                      }`}
+                    >
+                      <div className="font-black text-lg italic">CLASSIC</div>
+                      <div className="text-[10px] font-bold opacity-60">BLUE CARD</div>
+                    </button>
+                    <button
+                      onClick={() => { setMode('ultimate'); setPlayMode('computer'); }}
+                      className={`relative overflow-hidden p-4 rounded-2xl border-2 transition-all ${
+                        mode === 'ultimate' && playMode !== 'online'
+                        ? 'border-purple-400 bg-purple-500/20 text-white' 
+                        : 'border-white/10 text-white/40 hover:border-white/20'
+                      }`}
+                    >
+                      <div className="font-black text-lg italic">ULTIMATE</div>
+                      <div className="text-[10px] font-bold opacity-60">PURPLE CARD</div>
+                    </button>
+                  </div>
+
+                  {/* Online Toggle */}
+                  <button
+                    onClick={handleOnlineClick}
+                    className={`w-full p-4 rounded-2xl border-2 flex items-center justify-between transition-all ${
+                      playMode === 'online'
+                      ? 'border-red-400 bg-red-500/20 text-white'
+                      : 'border-white/10 text-white/40 hover:border-white/20'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Globe size={20} className={playMode === 'online' ? 'text-red-400' : 'text-white/40'} />
+                      <div className="text-left">
+                        <div className="font-black italic">ONLINE LOBBY</div>
+                        <div className="text-[10px] font-bold opacity-60 text-red-400">RED CARD</div>
+                      </div>
+                    </div>
+                    <div className="px-2 py-1 bg-red-500/20 rounded text-[10px] font-black text-red-400">NEW</div>
+                  </button>
+
+                  {/* Settings */}
+                  <div className="space-y-4 pt-4 border-t border-white/5">
+                    <div className="flex items-center justify-between text-white/80">
+                      <div className="flex items-center gap-2">
+                        <Monitor size={16} className="text-white/40" />
+                        <span className="text-xs font-black uppercase tracking-wider">Play Mode</span>
+                      </div>
+                      <div className="flex bg-white/5 p-1 rounded-xl">
+                        {(['computer', 'local'] as PlayMode[]).map(m => (
+                          <button
+                            key={m}
+                            onClick={() => setPlayMode(m)}
+                            className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
+                              playMode === m ? 'bg-white text-slate-900 shadow-lg' : 'text-white/40 hover:text-white/60'
+                            }`}
+                          >
+                            {m === 'computer' ? 'VS CPU' : 'Local'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between text-white/80">
+                      <div className="flex items-center gap-2">
+                        <Users size={16} className="text-white/40" />
+                        <span className="text-xs font-black uppercase tracking-wider">Players</span>
+                      </div>
+                      <div className="flex gap-1.5">
+                        {[2, 3, 4].map(n => (
+                          <button
+                            key={n}
+                            onClick={() => setNumPlayers(n)}
+                            className={`w-8 h-8 rounded-lg text-xs font-black transition-all ${
+                              numPlayers === n ? 'bg-white text-slate-900' : 'bg-white/5 text-white/40 hover:bg-white/10'
+                            }`}
+                          >
+                            {n}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between text-white/80">
+                      <div className="flex items-center gap-2">
+                        <Layers size={16} className="text-white/40" />
+                        <span className="text-xs font-black uppercase tracking-wider">Decks</span>
+                      </div>
+                      <div className="flex gap-1.5">
+                        {[1, 2].map(n => (
+                          <button
+                            key={n}
+                            onClick={() => setNumDecks(n as 1 | 2)}
+                            className={`w-8 h-8 rounded-lg text-xs font-black transition-all ${
+                              numDecks === n ? 'bg-white text-slate-900' : 'bg-white/5 text-white/40 hover:bg-white/10'
+                            }`}
+                          >
+                            {n}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-4">
+                  {onlineView === 'main' && (
+                    <div className="grid gap-3">
+                      <button
+                        onClick={() => setOnlineView('host')}
+                        className="p-6 rounded-3xl bg-white/5 border-2 border-white/10 hover:border-red-400/50 hover:bg-red-500/10 transition-all group text-left"
+                      >
+                        <Plus className="text-red-400 mb-2 group-hover:scale-110 transition-transform" />
+                        <div className="font-black text-xl text-white italic">HOST GAME</div>
+                        <div className="text-xs text-white/40 font-bold">Create a new private lobby</div>
+                      </button>
+                      <button
+                        onClick={() => setOnlineView('join')}
+                        className="p-6 rounded-3xl bg-white/5 border-2 border-white/10 hover:border-red-400/50 hover:bg-red-500/10 transition-all group text-left"
+                      >
+                        <LogIn className="text-red-400 mb-2 group-hover:scale-110 transition-transform" />
+                        <div className="font-black text-xl text-white italic">JOIN GAME</div>
+                        <div className="text-xs text-white/40 font-bold">Find an existing lobby</div>
+                      </button>
+                      <button
+                        onClick={() => setPlayMode('computer')}
+                        className="mt-4 flex items-center justify-center gap-2 text-white/40 hover:text-white/60 transition-colors text-xs font-black uppercase"
+                      >
+                        <ArrowLeft size={14} /> Back to Offline
+                      </button>
+                    </div>
+                  )}
+
+                  {onlineView === 'host' && (
+                    <div className="space-y-6">
+                      <div className="flex items-center gap-2 text-red-400 font-black italic">
+                        <Globe size={18} /> LOBBY SETTINGS
+                      </div>
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between text-white/80">
+                          <span className="text-xs font-black uppercase tracking-wider">Mode</span>
+                          <div className="flex bg-white/5 p-1 rounded-xl">
+                            <button onClick={() => setMode('classic')} className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase ${mode === 'classic' ? 'bg-white text-slate-900' : 'text-white/40'}`}>Classic</button>
+                            <button onClick={() => setMode('ultimate')} className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase ${mode === 'ultimate' ? 'bg-white text-slate-900' : 'text-white/40'}`}>Ultimate</button>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between text-white/80">
+                          <div className="flex items-center gap-2">
+                            <Layers size={16} className="text-white/40" />
+                            <span className="text-xs font-black uppercase tracking-wider">Decks</span>
+                          </div>
+                          <div className="flex gap-1.5">
+                            {[1, 2].map(n => (
+                              <button
+                                key={n}
+                                onClick={() => setNumDecks(n as 1 | 2)}
+                                className={`w-8 h-8 rounded-lg text-xs font-black transition-all ${
+                                  numDecks === n ? 'bg-white text-slate-900' : 'bg-white/5 text-white/40'
+                                }`}
+                              >
+                                {n}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {mode === 'ultimate' && (
+                          <div className="space-y-2">
+                            <div className="flex justify-between text-white text-[10px] font-black uppercase">
+                              <span>Starting Score</span>
+                              <span className="text-red-400">{startingScore}</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="50"
+                              max="500"
+                              step="10"
+                              value={startingScore}
+                              onChange={(e) => setStartingScore(parseInt(e.target.value))}
+                              className="w-full accent-red-500"
+                            />
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={hostLobby}
+                        disabled={isLoading}
+                        className="w-full py-4 bg-red-500 text-white rounded-2xl font-black italic text-lg shadow-xl shadow-red-500/20 hover:bg-red-400 transition-colors flex items-center justify-center gap-2"
+                      >
+                        {isLoading ? <RefreshCw className="animate-spin" /> : <Globe size={20} />}
+                        CREATE LOBBY
+                      </button>
+                      <button onClick={() => setOnlineView('main')} className="w-full text-white/40 text-xs font-black uppercase">Cancel</button>
+                    </div>
+                  )}
+
+                  {onlineView === 'join' && (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-red-400 font-black italic">
+                          <LogIn size={18} /> ACTIVE LOBBIES
+                        </div>
+                        <button onClick={() => setOnlineView('main')} className="text-white/40 text-[10px] font-black uppercase">Back</button>
+                      </div>
+                      <div className="space-y-2 max-h-[300px] overflow-y-auto no-scrollbar">
+                        {lobbies.length === 0 ? (
+                          <div className="py-12 text-center text-white/20 font-black italic">NO LOBBIES FOUND</div>
+                        ) : (
+                          lobbies.map(l => (
+                            <button
+                              key={l.id}
+                              onClick={() => joinLobby(l)}
+                              className="w-full p-4 rounded-2xl bg-white/5 border border-white/10 hover:border-red-400/50 flex items-center justify-between group transition-all"
+                            >
+                              <div className="text-left">
+                                <div className="text-white font-black italic">{l.hostName}'s Game</div>
+                                <div className="text-[10px] text-white/40 font-bold uppercase">{l.settings.mode} • {l.players.length}/4 Players</div>
+                              </div>
+                              <ArrowLeft className="rotate-180 text-white/20 group-hover:text-red-400 transition-colors" size={18} />
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {onlineView === 'lobby' && currentLobby && (
+                    <div className="space-y-6">
+                      <div className="text-center">
+                        <div className="text-red-400 font-black italic text-sm mb-1 tracking-widest">LOBBY READY</div>
+                        <div className="text-white font-black text-2xl italic">{currentLobby.id.slice(0, 6).toUpperCase()}</div>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-2">Players Joined</div>
+                        {currentLobby.players.map((p: any) => (
+                          <div key={p.id} className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5">
+                            <div className="flex items-center gap-3">
+                              <div className={`w-2 h-2 rounded-full ${p.id === user?.uid ? 'bg-green-400' : 'bg-red-400'}`} />
+                              <span className="text-white font-bold italic">{p.name}</span>
+                            </div>
+                            {p.isHost && <span className="text-[8px] font-black bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded uppercase">Host</span>}
+                          </div>
+                        ))}
+                        {Array.from({ length: 4 - currentLobby.players.length }).map((_, i) => (
+                          <div key={i} className="p-3 rounded-xl border border-dashed border-white/10 flex items-center justify-center">
+                            <span className="text-[10px] font-black text-white/10 uppercase tracking-widest">Waiting for player...</span>
+                          </div>
+                        ))}
+                      </div>
+                      {currentLobby.hostId === user?.uid ? (
+                        <button
+                          onClick={startGameOnline}
+                          className="w-full py-4 bg-white text-slate-900 rounded-2xl font-black italic text-lg shadow-xl hover:bg-red-50 transition-colors"
+                        >
+                          START SESSION
+                        </button>
+                      ) : (
+                        <div className="text-center py-4 text-white/40 font-black italic animate-pulse">WAITING FOR HOST...</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {playMode !== 'online' && (
+              <motion.button
+                layoutId="start-btn"
+                onClick={handleStart}
+                className="w-full mt-6 bg-white text-slate-900 py-4 rounded-2xl font-black text-xl flex items-center justify-center gap-2 hover:bg-blue-50 transition-colors shadow-xl"
+              >
+                <Play fill="currentColor" size={20} />
+                START GAME
+              </motion.button>
+            )}
+          </div>
+        </motion.div>
+      </AnimatePresence>
     </div>
   );
 }

@@ -14,9 +14,13 @@ export default function App() {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [settings, setSettings] = useState<GameSettings | null>(null);
 
-  const handleStartGame = (newSettings: GameSettings, playerNames: string[]) => {
+  const handleStartGame = (newSettings: GameSettings, playerNames: string[], initialOnlineState?: GameState) => {
     setSettings(newSettings);
-    setGameState(getInitialGameState(newSettings, playerNames));
+    if (initialOnlineState) {
+      setGameState(initialOnlineState);
+    } else {
+      setGameState(getInitialGameState(newSettings, playerNames));
+    }
   };
 
   const handleUpdateGame = (newState: GameState) => {

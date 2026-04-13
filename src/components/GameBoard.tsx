@@ -6,6 +6,9 @@ import { playCard, drawCard } from '../lib/gameEngine';
 import { isValidMove, SUITS, RANKS, createDeck, getInitialGameState, shuffle, calculateCardScore } from '../lib/gameUtils';
 import { ArrowRight, RotateCcw, Info, Trophy } from 'lucide-react';
 
+import { auth, db } from '../lib/firebase';
+import { doc, updateDoc, onSnapshot } from 'firebase/firestore';
+
 interface GameBoardProps {
   gameState: GameState;
   settings: GameSettings;
@@ -28,13 +31,24 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
   const discardPileRef = useRef<HTMLDivElement>(null);
 
   const currentPlayer = gameState.players[gameState.currentPlayerIndex];
-  const isHumanTurn = !currentPlayer.isAI;
+  const isHumanTurn = settings.playMode === 'online' 
+    ? (auth.currentUser?.uid === currentPlayer.id)
+    : !currentPlayer.isAI;
+
   // In computer mode, always show the human player (index 0) at the bottom
-  const displayPlayer = settings.playMode === 'computer' ? gameState.players[0] : currentPlayer;
+  // In online mode, show the authenticated user at the bottom
+  const displayPlayer = settings.playMode === 'computer' 
+    ? gameState.players[0] 
+    : (settings.playMode === 'online' 
+        ? gameState.players.find(p => p.id === auth.currentUser?.uid) || currentPlayer
+        : currentPlayer);
+
   const aiProcessingRef = React.useRef<string | null>(null);
 
   const getPlayStartPos = (index: number) => {
-    const isDisplayPlayer = (settings.playMode === 'computer' && index === 0) || (settings.playMode === 'local');
+    const isDisplayPlayer = (settings.playMode === 'computer' && index === 0) || 
+                           (settings.playMode === 'local') ||
+                           (settings.playMode === 'online' && gameState.players[index].id === auth.currentUser?.uid);
     if (isDisplayPlayer) return { x: 0, y: 400 };
     
     const playerEl = playerRefs.current[index];
@@ -48,7 +62,9 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
   };
 
   const getDrawTargetPos = (index: number) => {
-    const isDisplayPlayer = (settings.playMode === 'computer' && index === 0) || (settings.playMode === 'local');
+    const isDisplayPlayer = (settings.playMode === 'computer' && index === 0) || 
+                           (settings.playMode === 'local') ||
+                           (settings.playMode === 'online' && gameState.players[index].id === auth.currentUser?.uid);
     if (isDisplayPlayer) return { x: 0, y: 400 };
     
     const playerEl = playerRefs.current[index];
@@ -60,6 +76,33 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
     }
     return { x: 0, y: -300 };
   };
+
+  const handleUpdate = (newState: GameState) => {
+    if (settings.playMode === 'online' && settings.lobbyId) {
+      updateDoc(doc(db, 'lobbies', settings.lobbyId), {
+        gameState: newState
+      });
+    } else {
+      onUpdate(newState);
+    }
+  };
+
+  // Online Sync Logic
+  useEffect(() => {
+    if (settings.playMode === 'online' && settings.lobbyId) {
+      const unsubscribe = onSnapshot(doc(db, 'lobbies', settings.lobbyId), (doc) => {
+        if (doc.exists()) {
+          const data = doc.data();
+          if (data.gameState) {
+            // Only update if the incoming state is different to avoid loops
+            // A simple way is to check if it's NOT our turn, or if the turn key changed
+            onUpdate(data.gameState);
+          }
+        }
+      });
+      return () => unsubscribe();
+    }
+  }, [settings.lobbyId, settings.playMode]);
 
   // AI Logic
   useEffect(() => {
@@ -143,7 +186,7 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
           const nextState = playCard(stateToUpdate, gameState.currentPlayerIndex, chosenCard.id, settings, chosenSuit, chosenRank);
           setIsAiThinking(false);
           setPlayAnimation(null);
-          onUpdate(nextState);
+          handleUpdate(nextState);
         }, 600);
       } else {
         setIsAiThinking(false);
@@ -151,7 +194,7 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
         setDrawTarget(getDrawTargetPos(gameState.currentPlayerIndex));
 
         setTimeout(() => {
-          onUpdate(drawCard(gameState, gameState.currentPlayerIndex));
+          handleUpdate(drawCard(gameState, gameState.currentPlayerIndex));
           setIsDrawing(false);
           setDrawTarget(null);
         }, 600);
@@ -191,9 +234,9 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
         if (currentPlayer.hand.length === 2 && !currentPlayer.hasDeclaredLastCard && nextState.players[gameState.currentPlayerIndex].hand.length === 1) {
           const penaltyState = drawCard(nextState, gameState.currentPlayerIndex);
           const finalState = drawCard(penaltyState, gameState.currentPlayerIndex);
-          onUpdate({ ...finalState, lastActionMessage: `Penalty! ${currentPlayer.name} forgot to declare Last Card! (+2 cards)` });
+          handleUpdate({ ...finalState, lastActionMessage: `Penalty! ${currentPlayer.name} forgot to declare Last Card! (+2 cards)` });
         } else {
-          onUpdate(nextState);
+          handleUpdate(nextState);
         }
       }, 400);
     }
@@ -203,7 +246,7 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
     if (!isHumanTurn || currentPlayer.hand.length !== 2) return;
     const newPlayers = [...gameState.players];
     newPlayers[gameState.currentPlayerIndex] = { ...newPlayers[gameState.currentPlayerIndex], hasDeclaredLastCard: true };
-    onUpdate({ ...gameState, players: newPlayers, lastActionMessage: `${currentPlayer.name} declared Last Card!` });
+    handleUpdate({ ...gameState, players: newPlayers, lastActionMessage: `${currentPlayer.name} declared Last Card!` });
   };
 
   const handleSuitSelect = (suit: Suit) => {
@@ -220,9 +263,9 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
         if (currentPlayer.hand.length === 2 && !currentPlayer.hasDeclaredLastCard && nextState.players[gameState.currentPlayerIndex].hand.length === 1) {
           const penaltyState = drawCard(nextState, gameState.currentPlayerIndex);
           const finalState = drawCard(penaltyState, gameState.currentPlayerIndex);
-          onUpdate({ ...finalState, lastActionMessage: `Penalty! ${currentPlayer.name} forgot to declare Last Card! (+2 cards)` });
+          handleUpdate({ ...finalState, lastActionMessage: `Penalty! ${currentPlayer.name} forgot to declare Last Card! (+2 cards)` });
         } else {
-          onUpdate(nextState);
+          handleUpdate(nextState);
         }
         
         setPendingCardId(null);
@@ -239,9 +282,9 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
       if (currentPlayer.hand.length === 2 && !currentPlayer.hasDeclaredLastCard && nextState.players[gameState.currentPlayerIndex].hand.length === 1) {
         const penaltyState = drawCard(nextState, gameState.currentPlayerIndex);
         const finalState = drawCard(penaltyState, gameState.currentPlayerIndex);
-        onUpdate({ ...finalState, lastActionMessage: `Penalty! ${currentPlayer.name} forgot to declare Last Card! (+2 cards)` });
+        handleUpdate({ ...finalState, lastActionMessage: `Penalty! ${currentPlayer.name} forgot to declare Last Card! (+2 cards)` });
       } else {
-        onUpdate(nextState);
+        handleUpdate(nextState);
       }
       
       setPendingCardId(null);
@@ -257,7 +300,7 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
     setDrawTarget(getDrawTargetPos(gameState.currentPlayerIndex));
     
     setTimeout(() => {
-      onUpdate(drawCard(gameState, gameState.currentPlayerIndex));
+      handleUpdate(drawCard(gameState, gameState.currentPlayerIndex));
       setIsDrawing(false);
       setDrawTarget(null);
     }, 600);
@@ -671,7 +714,7 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
                     firstDiscard = deck.pop()!;
                   }
 
-                  onUpdate({
+                  handleUpdate({
                     ...nextRoundState,
                     players: updatedPlayers,
                     drawPile: deck,

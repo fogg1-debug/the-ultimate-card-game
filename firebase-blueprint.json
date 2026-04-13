@@ -1,0 +1,27 @@
+{
+  "entities": {
+    "Lobby": {
+      "title": "Lobby",
+      "description": "A game lobby for online play",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "hostId": { "type": "string" },
+        "hostName": { "type": "string" },
+        "status": { "type": "string", "enum": ["waiting", "playing", "finished"] },
+        "settings": { "type": "object" },
+        "players": { "type": "array" },
+        "gameState": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["hostId", "status", "settings", "players"]
+    }
+  },
+  "firestore": {
+    "/lobbies/{lobbyId}": {
+      "schema": "Lobby",
+      "description": "Lobbies collection"
+    }
+  }
+}

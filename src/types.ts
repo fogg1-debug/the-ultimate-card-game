@@ -12,7 +12,7 @@ export interface Card {
 }
 
 export type GameMode = 'classic' | 'ultimate';
-export type PlayMode = 'local' | 'computer';
+export type PlayMode = 'local' | 'computer' | 'online';
 export type Difficulty = 'easy' | 'normal' | 'hard';
 
 export interface Player {
@@ -32,6 +32,8 @@ export interface GameSettings {
   numDecks: 1 | 2;
   startingScore: number;
   cardsPerPlayer: number;
+  lobbyId?: string;
+  hostId?: string;
 }
 
 export interface GameState {
