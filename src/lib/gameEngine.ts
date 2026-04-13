@@ -62,7 +62,13 @@ export function playCard(gameState: GameState, playerIndex: number, cardId: stri
   if (card.rank === 'RJ') {
     message = `${player.name} played Red Joker as ${newRank} of ${newSuit}!`;
   } else if (card.rank === 'BJ') {
-    message = `${player.name} played Black Joker!`;
+    // Black Joker maintains suit and rank of the card beneath it
+    const cardBeneath = gameState.discardPile[0];
+    if (cardBeneath) {
+      newSuit = cardBeneath.transformedToSuit || cardBeneath.suit;
+      newRank = cardBeneath.transformedToRank || cardBeneath.rank;
+    }
+    message = `${player.name} played Black Joker! It mimics ${newRank} of ${newSuit}.`;
   }
 
   // Check for Last Card rule
@@ -136,9 +142,14 @@ export function drawCard(gameState: GameState, playerIndex: number): GameState {
 
   // Normal draw
   if (newDrawPile.length === 0) {
-    const topCard = newDiscardPile.shift()!;
-    newDrawPile = shuffle(newDiscardPile);
-    newDiscardPile = [topCard];
+    if (newDiscardPile.length > 1) {
+      const topCard = newDiscardPile.shift()!;
+      newDrawPile = shuffle(newDiscardPile);
+      newDiscardPile = [topCard];
+      message = `Draw pile empty! Reshuffling discard pile...`;
+    } else {
+      return { ...gameState, lastActionMessage: "No more cards to draw!" };
+    }
   }
 
   const drawnCard = newDrawPile.pop();
@@ -161,7 +172,7 @@ export function drawCard(gameState: GameState, playerIndex: number): GameState {
 }
 
 function advanceTurn(gameState: GameState): GameState {
-  const { players, currentPlayerIndex, direction, skipNextPlayer } = gameState;
+  const { players, currentPlayerIndex, direction, skipNextPlayer, drawPile, discardPile } = gameState;
   let nextIndex = (currentPlayerIndex + direction + players.length) % players.length;
   
   // Skip logic
@@ -174,10 +185,25 @@ function advanceTurn(gameState: GameState): GameState {
     nextIndex = (nextIndex + direction + players.length) % players.length;
   }
 
+  // Reshuffle logic if draw pile is empty
+  let updatedDrawPile = [...drawPile];
+  let updatedDiscardPile = [...discardPile];
+  let reshuffleMessage = '';
+
+  if (updatedDrawPile.length === 0 && updatedDiscardPile.length > 1) {
+    const topCard = updatedDiscardPile.shift()!;
+    updatedDrawPile = shuffle(updatedDiscardPile);
+    updatedDiscardPile = [topCard];
+    reshuffleMessage = 'Draw pile empty! Reshuffling discard pile...';
+  }
+
   return {
     ...gameState,
     currentPlayerIndex: nextIndex,
     skipNextPlayer: false,
+    drawPile: updatedDrawPile,
+    discardPile: updatedDiscardPile,
+    lastActionMessage: reshuffleMessage || gameState.lastActionMessage
   };
 }
 

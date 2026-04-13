@@ -14,6 +14,7 @@ interface CardProps {
   className?: string;
   isPlayable?: boolean;
   isCurrent?: boolean;
+  noHover?: boolean;
   key?: string | number;
 }
 
@@ -33,7 +34,7 @@ const suitColors: Record<Suit, string> = {
   joker: 'text-purple-600',
 };
 
-export function Card({ card, onClick, isFaceUp = true, className, isPlayable, isCurrent }: CardProps) {
+export function Card({ card, onClick, isFaceUp = true, className, isPlayable, isCurrent, noHover }: CardProps) {
   const displaySuit = card.transformedToSuit || card.suit;
   const displayRank = card.transformedToRank || card.rank;
   
@@ -43,7 +44,7 @@ export function Card({ card, onClick, isFaceUp = true, className, isPlayable, is
   if (!isFaceUp) {
     return (
       <motion.div
-        whileHover={onClick ? { y: -10, scale: 1.05 } : {}}
+        whileHover={noHover ? {} : { y: -20, scale: 1.05 }}
         onClick={onClick}
         className={cn(
           "relative w-24 h-36 rounded-xl border-2 border-white shadow-lg cursor-pointer bg-blue-800 overflow-hidden",
@@ -61,7 +62,7 @@ export function Card({ card, onClick, isFaceUp = true, className, isPlayable, is
   return (
     <motion.div
       layoutId={card.id}
-      whileHover={isPlayable ? { y: -20, scale: 1.1 } : {}}
+      whileHover={noHover ? {} : { y: -20, scale: 1.1, zIndex: 50 }}
       animate={isCurrent ? { scale: 1.05, boxShadow: "0 0 20px rgba(255,255,255,0.5)" } : {}}
       onClick={isPlayable ? onClick : undefined}
       className={cn(

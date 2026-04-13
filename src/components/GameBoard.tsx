@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { GameState, GameSettings, Card as CardType, Suit, Rank } from '../types';
 import { Card } from './Card';
 import { motion, AnimatePresence } from 'motion/react';
@@ -21,100 +21,145 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [showTurnTransition, setShowTurnTransition] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [drawTarget, setDrawTarget] = useState<{ x: number, y: number } | null>(null);
+  const [aiPlayAnimation, setPlayAnimation] = useState<{ card: CardType, start: { x: number, y: number } } | null>(null);
+  const playerRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const drawPileRef = useRef<HTMLDivElement>(null);
+  const discardPileRef = useRef<HTMLDivElement>(null);
 
   const currentPlayer = gameState.players[gameState.currentPlayerIndex];
   const isHumanTurn = !currentPlayer.isAI;
+  // In computer mode, always show the human player (index 0) at the bottom
+  const displayPlayer = settings.playMode === 'computer' ? gameState.players[0] : currentPlayer;
+  const aiProcessingRef = React.useRef<string | null>(null);
+
+  const getPlayStartPos = (index: number) => {
+    const isDisplayPlayer = (settings.playMode === 'computer' && index === 0) || (settings.playMode === 'local');
+    if (isDisplayPlayer) return { x: 0, y: 400 };
+    
+    const playerEl = playerRefs.current[index];
+    const discardEl = discardPileRef.current;
+    if (playerEl && discardEl) {
+      const pRect = playerEl.getBoundingClientRect();
+      const dRect = discardEl.getBoundingClientRect();
+      return { x: pRect.left - dRect.left, y: pRect.top - dRect.top };
+    }
+    return { x: 0, y: -300 };
+  };
+
+  const getDrawTargetPos = (index: number) => {
+    const isDisplayPlayer = (settings.playMode === 'computer' && index === 0) || (settings.playMode === 'local');
+    if (isDisplayPlayer) return { x: 0, y: 400 };
+    
+    const playerEl = playerRefs.current[index];
+    const drawEl = drawPileRef.current;
+    if (playerEl && drawEl) {
+      const pRect = playerEl.getBoundingClientRect();
+      const dRect = drawEl.getBoundingClientRect();
+      return { x: pRect.left - dRect.left, y: pRect.top - dRect.top };
+    }
+    return { x: 0, y: -300 };
+  };
 
   // AI Logic
   useEffect(() => {
-    if (gameState.gameStatus === 'playing' && currentPlayer.isAI && !isAiThinking && !showTurnTransition && !isDrawing) {
-      setIsAiThinking(true);
-      
-      // Faster thinking for better pacing
-      const thinkingTime = 400 + Math.random() * 400;
-      
-      const timer = setTimeout(() => {
-        const playableCards = currentPlayer.hand.filter(c => isValidMove(c, gameState, settings).valid);
-        
-        let nextState: GameState;
-        
-        if (playableCards.length > 0) {
-          let chosenCard = playableCards[0];
-
-          // Difficulty Logic
-          if (settings.difficulty === 'easy') {
-            chosenCard = playableCards[Math.floor(Math.random() * playableCards.length)];
-          } else if (settings.difficulty === 'normal') {
-            const special = playableCards.find(c => ['2', '8', 'J', 'A'].includes(c.rank));
-            chosenCard = special || playableCards[Math.floor(Math.random() * playableCards.length)];
-          } else if (settings.difficulty === 'hard') {
-            const sorted = [...playableCards].sort((a, b) => calculateCardScore(b) - calculateCardScore(a));
-            const special = sorted.find(c => ['2', '8', 'J', 'A'].includes(c.rank));
-            const opponentHasFewCards = gameState.players.some((p, i) => i !== gameState.currentPlayerIndex && !p.isEliminated && p.hand.length <= 2);
-            chosenCard = (opponentHasFewCards && special) ? special : sorted[0];
-          }
-
-          // AI declares last card if needed
-          let stateToUpdate = gameState;
-          if (currentPlayer.hand.length === 2) {
-            const newPlayers = [...gameState.players];
-            newPlayers[gameState.currentPlayerIndex] = { 
-              ...newPlayers[gameState.currentPlayerIndex], 
-              hasDeclaredLastCard: true 
-            };
-            stateToUpdate = { ...gameState, players: newPlayers };
-          }
-
-          let chosenSuit: Suit | undefined;
-          let chosenRank: Rank | undefined;
-          
-          if (chosenCard.rank === 'A' || chosenCard.rank === 'RJ') {
-            // Pick suit
-            if (settings.difficulty === 'hard') {
-              const suitCounts: Record<string, number> = {};
-              currentPlayer.hand.forEach(c => {
-                if (c.suit !== 'joker') {
-                  suitCounts[c.suit] = (suitCounts[c.suit] || 0) + 1;
-                }
-              });
-              const bestSuit = Object.entries(suitCounts).sort((a, b) => b[1] - a[1])[0]?.[0] as Suit;
-              chosenSuit = bestSuit || SUITS[Math.floor(Math.random() * SUITS.length)];
-            } else {
-              chosenSuit = SUITS[Math.floor(Math.random() * SUITS.length)];
-            }
-
-            // If Red Joker, also pick a rank
-            if (chosenCard.rank === 'RJ') {
-              if (settings.difficulty === 'hard') {
-                // Hard AI picks a 2 if it has another 2 to stack, or a skip if opponent is low
-                const hasAnotherTwo = currentPlayer.hand.some(c => c.rank === '2' && c.id !== chosenCard.id);
-                const opponentLow = gameState.players.some((p, i) => i !== gameState.currentPlayerIndex && !p.isEliminated && p.hand.length <= 2);
-                
-                if (hasAnotherTwo) chosenRank = '2';
-                else if (opponentLow) chosenRank = '8';
-                else chosenRank = 'A';
-              } else {
-                chosenRank = RANKS[Math.floor(Math.random() * RANKS.length)];
-              }
-            }
-          }
-          nextState = playCard(stateToUpdate, gameState.currentPlayerIndex, chosenCard.id, settings, chosenSuit, chosenRank);
-          setIsAiThinking(false);
-          onUpdate(nextState);
-        } else {
-          // AI Draws
-          setIsAiThinking(false);
-          setIsDrawing(true);
-          setTimeout(() => {
-            onUpdate(drawCard(gameState, gameState.currentPlayerIndex));
-            setIsDrawing(false);
-          }, 600);
-        }
-      }, thinkingTime);
-      
-      return () => clearTimeout(timer);
+    // Create a unique key for the current turn state
+    // This includes player index, round, and the number of cards in piles to detect any change
+    const turnKey = `${gameState.currentPlayerIndex}-${gameState.roundNumber}-${gameState.discardPile.length}-${gameState.drawPile.length}`;
+    
+    // Only run if it's an AI's turn and the game is active
+    if (
+      gameState.gameStatus !== 'playing' || 
+      !currentPlayer.isAI || 
+      showTurnTransition || 
+      isDrawing ||
+      aiProcessingRef.current === turnKey
+    ) {
+      return;
     }
-  }, [gameState.currentPlayerIndex, gameState.gameStatus, isAiThinking, showTurnTransition, isDrawing, settings.playMode]);
+
+    aiProcessingRef.current = turnKey;
+    setIsAiThinking(true);
+    
+    // Natural thinking time (800ms to 1500ms)
+    const thinkingTime = 800 + Math.random() * 700;
+    
+    const timer = setTimeout(() => {
+      const playableCards = currentPlayer.hand.filter(c => isValidMove(c, gameState, settings).valid);
+      
+      if (playableCards.length > 0) {
+        let chosenCard = playableCards[0];
+        if (settings.difficulty === 'easy') {
+          chosenCard = playableCards[Math.floor(Math.random() * playableCards.length)];
+        } else if (settings.difficulty === 'normal') {
+          const special = playableCards.find(c => ['2', '8', 'J', 'A'].includes(c.rank));
+          chosenCard = special || playableCards[Math.floor(Math.random() * playableCards.length)];
+        } else if (settings.difficulty === 'hard') {
+          const sorted = [...playableCards].sort((a, b) => calculateCardScore(b) - calculateCardScore(a));
+          const special = sorted.find(c => ['2', '8', 'J', 'A'].includes(c.rank));
+          const opponentHasFewCards = gameState.players.some((p, i) => i !== gameState.currentPlayerIndex && !p.isEliminated && p.hand.length <= 2);
+          chosenCard = (opponentHasFewCards && special) ? special : sorted[0];
+        }
+
+        let stateToUpdate = gameState;
+        if (currentPlayer.hand.length === 2) {
+          const newPlayers = [...gameState.players];
+          newPlayers[gameState.currentPlayerIndex] = { ...newPlayers[gameState.currentPlayerIndex], hasDeclaredLastCard: true };
+          stateToUpdate = { ...gameState, players: newPlayers };
+        }
+
+        let chosenSuit: Suit | undefined;
+        let chosenRank: Rank | undefined;
+        if (chosenCard.rank === 'A' || chosenCard.rank === 'RJ') {
+          const suitCounts: Record<string, number> = {};
+          currentPlayer.hand.forEach(c => {
+            if (c.suit !== 'joker' && c.id !== chosenCard.id) {
+              suitCounts[c.suit] = (suitCounts[c.suit] || 0) + 1;
+            }
+          });
+          const suits = Object.entries(suitCounts).sort((a, b) => b[1] - a[1]);
+          chosenSuit = suits.length > 0 ? suits[0][0] as Suit : SUITS[Math.floor(Math.random() * SUITS.length)];
+          if (chosenCard.rank === 'RJ') {
+            if (settings.difficulty === 'hard') {
+              const hasAnotherTwo = currentPlayer.hand.some(c => c.rank === '2' && c.id !== chosenCard.id);
+              const opponentLow = gameState.players.some((p, i) => i !== gameState.currentPlayerIndex && !p.isEliminated && p.hand.length <= 2);
+              if (hasAnotherTwo) chosenRank = '2';
+              else if (opponentLow) chosenRank = '8';
+              else chosenRank = 'A';
+            } else {
+              const otherRanks = currentPlayer.hand.filter(c => c.id !== chosenCard.id && c.rank !== 'RJ').map(c => c.rank);
+              chosenRank = otherRanks.length > 0 ? otherRanks[0] : 'A';
+            }
+          }
+        }
+        
+        // Calculate animation start from player icon
+        setPlayAnimation({ 
+          card: chosenCard, 
+          start: getPlayStartPos(gameState.currentPlayerIndex)
+        });
+
+        setTimeout(() => {
+          const nextState = playCard(stateToUpdate, gameState.currentPlayerIndex, chosenCard.id, settings, chosenSuit, chosenRank);
+          setIsAiThinking(false);
+          setPlayAnimation(null);
+          onUpdate(nextState);
+        }, 600);
+      } else {
+        setIsAiThinking(false);
+        setIsDrawing(true);
+        setDrawTarget(getDrawTargetPos(gameState.currentPlayerIndex));
+
+        setTimeout(() => {
+          onUpdate(drawCard(gameState, gameState.currentPlayerIndex));
+          setIsDrawing(false);
+          setDrawTarget(null);
+        }, 600);
+      }
+    }, thinkingTime);
+    
+    return () => clearTimeout(timer);
+  }, [gameState.currentPlayerIndex, gameState.roundNumber, gameState.discardPile.length, gameState.drawPile.length, gameState.gameStatus, showTurnTransition, isDrawing, settings.playMode, settings.difficulty, currentPlayer.isAI]);
 
   // Local Mode: Show transition screen when turn changes
   useEffect(() => {
@@ -129,32 +174,28 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
     const card = currentPlayer.hand.find(c => c.id === cardId);
     if (!card) return;
 
-    // Penalty check for Last Card
-    let updatedGameState = gameState;
-    if (currentPlayer.hand.length === 2 && !currentPlayer.hasDeclaredLastCard) {
-      // In a real game, you'd have a window to click it. 
-      // Here we'll just check if they clicked it before playing.
-      // But let's make it more forgiving: if they have 2 cards and play one, 
-      // they MUST have clicked the button first.
-      // Actually, let's just add the button and if they don't click it, 
-      // we'll apply penalty after the play.
-    }
-
     if (card.rank === 'A' || card.rank === 'RJ') {
       setPendingCardId(cardId);
       setShowSuitSelector(true);
     } else {
-      let nextState = playCard(gameState, gameState.currentPlayerIndex, cardId, settings);
-      
-      // Check if they forgot to declare Last Card
-      if (currentPlayer.hand.length === 2 && !currentPlayer.hasDeclaredLastCard && nextState.players[gameState.currentPlayerIndex].hand.length === 1) {
-        // Penalty!
-        const penaltyState = drawCard(nextState, gameState.currentPlayerIndex);
-        const finalState = drawCard(penaltyState, gameState.currentPlayerIndex);
-        onUpdate({ ...finalState, lastActionMessage: `Penalty! ${currentPlayer.name} forgot to declare Last Card! (+2 cards)` });
-      } else {
-        onUpdate(nextState);
-      }
+      setPlayAnimation({
+        card,
+        start: getPlayStartPos(gameState.currentPlayerIndex)
+      });
+
+      setTimeout(() => {
+        let nextState = playCard(gameState, gameState.currentPlayerIndex, cardId, settings);
+        setPlayAnimation(null);
+        
+        // Check if they forgot to declare Last Card
+        if (currentPlayer.hand.length === 2 && !currentPlayer.hasDeclaredLastCard && nextState.players[gameState.currentPlayerIndex].hand.length === 1) {
+          const penaltyState = drawCard(nextState, gameState.currentPlayerIndex);
+          const finalState = drawCard(penaltyState, gameState.currentPlayerIndex);
+          onUpdate({ ...finalState, lastActionMessage: `Penalty! ${currentPlayer.name} forgot to declare Last Card! (+2 cards)` });
+        } else {
+          onUpdate(nextState);
+        }
+      }, 400);
     }
   };
 
@@ -213,220 +254,269 @@ export function GameBoard({ gameState, settings, onUpdate, onRestart }: GameBoar
     if (!isHumanTurn || gameState.gameStatus !== 'playing' || isDrawing) return;
     
     setIsDrawing(true);
+    setDrawTarget(getDrawTargetPos(gameState.currentPlayerIndex));
+    
     setTimeout(() => {
       onUpdate(drawCard(gameState, gameState.currentPlayerIndex));
       setIsDrawing(false);
+      setDrawTarget(null);
     }, 600);
   };
 
   return (
-    <div className="min-h-screen bg-emerald-900 text-white p-4 flex flex-col overflow-hidden">
-      {/* Header */}
-      <div className="flex justify-between items-center mb-4">
-        <div className="flex items-center gap-4">
-          <h2 className="text-2xl font-black tracking-tighter">SWITCH</h2>
-          <div className="px-3 py-1 bg-white/10 rounded-full text-xs font-bold uppercase tracking-widest">
-            {settings.mode} Mode
+    <div className="fixed inset-0 bg-emerald-900 text-white flex flex-col overflow-hidden select-none">
+      {/* Background Pattern */}
+      <div className="absolute inset-0 opacity-5 pointer-events-none bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:20px_20px]" />
+
+      <div className="flex-1 flex flex-col p-4 max-w-5xl mx-auto w-full relative z-10 pb-48">
+        {/* Header */}
+        <div className="flex justify-between items-center mb-2 h-12">
+          <div className="flex items-center gap-3">
+            <h2 className="text-xl sm:text-2xl font-black tracking-tighter">SWITCH</h2>
+            <div className="px-2 py-0.5 bg-white/10 rounded-full text-[10px] font-bold uppercase tracking-widest">
+              {settings.mode}
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <div className="text-[8px] uppercase opacity-50 font-bold">Round</div>
+              <div className="text-lg font-black leading-none">{gameState.roundNumber}</div>
+            </div>
+            <button 
+              onClick={onRestart}
+              className="p-2 hover:bg-white/10 rounded-full transition-colors"
+            >
+              <RotateCcw size={18} />
+            </button>
           </div>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="text-right">
-            <div className="text-[10px] uppercase opacity-50 font-bold">Round</div>
-            <div className="text-xl font-black leading-none">{gameState.roundNumber}</div>
-          </div>
-          <button 
-            onClick={onRestart}
-            className="p-2 hover:bg-white/10 rounded-full transition-colors"
-          >
-            <RotateCcw size={20} />
-          </button>
-        </div>
-      </div>
 
-      {/* Scoreboard / Players */}
-      <div className="flex justify-center gap-4 mb-8 overflow-x-auto no-scrollbar py-2">
-        {gameState.players.map((player, idx) => {
-          const isCurrentPlayer = idx === gameState.currentPlayerIndex;
-          const isLastCard = player.hand.length === 1;
-          const showPulse = isLastCard && !isCurrentPlayer;
-          const showCount = settings.mode === 'classic' || isCurrentPlayer;
+        {/* Scoreboard / Players */}
+        <div className="flex justify-center gap-2 sm:gap-4 mb-4 overflow-x-auto no-scrollbar py-2 shrink-0">
+          {gameState.players.map((player, idx) => {
+            const isCurrentPlayer = idx === gameState.currentPlayerIndex;
+            const isLastCard = player.hand.length === 1;
+            const showPulse = isLastCard && !isCurrentPlayer;
+            const isUser = idx === 0 && settings.playMode === 'computer';
+            // Only show card count in classic mode OR if it's the user's own hand
+            const showCount = settings.mode === 'classic' || isUser;
 
-          return (
-            <div key={player.id} className={`flex flex-col items-center transition-all min-w-[80px] ${isCurrentPlayer ? 'scale-110' : 'opacity-60'}`}>
-              <div className={`relative w-16 h-24 rounded-lg border-2 bg-slate-800 flex items-center justify-center overflow-hidden transition-all ${
-                isCurrentPlayer ? "border-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.5)]" : "border-white/20"
-              } ${showPulse ? "animate-purple-pulse border-purple-500" : ""}`}>
-                <div className="text-2xl font-bold">
-                  {showCount ? player.hand.length : '?'}
-                </div>
-              
-              {/* AI Thinking Indicator */}
-              {player.isAI && idx === gameState.currentPlayerIndex && isAiThinking && (
-                <motion.div 
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="absolute inset-0 bg-blue-500/40 flex items-center justify-center"
-                >
-                  <div className="flex gap-1">
-                    <motion.div animate={{ y: [0, -4, 0] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0 }} className="w-1.5 h-1.5 bg-white rounded-full" />
-                    <motion.div animate={{ y: [0, -4, 0] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0.2 }} className="w-1.5 h-1.5 bg-white rounded-full" />
-                    <motion.div animate={{ y: [0, -4, 0] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0.4 }} className="w-1.5 h-1.5 bg-white rounded-full" />
+            return (
+              <div 
+                key={player.id} 
+                ref={el => playerRefs.current[idx] = el}
+                className={`flex flex-col items-center transition-all min-w-[70px] sm:min-w-[80px] ${isCurrentPlayer ? 'scale-105 sm:scale-110' : 'opacity-60'}`}
+              >
+                <div className={`relative w-14 h-20 sm:w-16 sm:h-24 rounded-lg border-2 bg-slate-800 flex items-center justify-center overflow-hidden transition-all ${
+                  isCurrentPlayer ? "border-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.5)]" : "border-white/20"
+                } ${showPulse ? "animate-purple-pulse border-purple-500" : ""}`}>
+                  <div className="text-xl sm:text-2xl font-bold">
+                    {showCount ? player.hand.length : '?'}
                   </div>
+                
+                {/* AI Thinking Indicator */}
+                {player.isAI && idx === gameState.currentPlayerIndex && isAiThinking && (
+                  <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="absolute inset-0 bg-blue-500/40 flex items-center justify-center"
+                  >
+                    <div className="flex gap-1">
+                      <motion.div animate={{ y: [0, -4, 0] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0 }} className="w-1 h-1 bg-white rounded-full" />
+                      <motion.div animate={{ y: [0, -4, 0] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0.2 }} className="w-1 h-1 bg-white rounded-full" />
+                      <motion.div animate={{ y: [0, -4, 0] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0.4 }} className="w-1 h-1 bg-white rounded-full" />
+                    </div>
+                  </motion.div>
+                )}
+
+                <div className="absolute bottom-0 left-0 right-0 bg-black/40 text-[7px] text-center py-0.5 font-bold uppercase">Cards</div>
+              </div>
+              <div className="mt-1 text-center">
+                <div className="text-[9px] font-bold truncate w-16 sm:w-20 flex flex-col items-center">
+                  <span className="flex items-center gap-1">
+                    {player.name}
+                    {isUser && <span className="text-[7px] text-blue-400">(You)</span>}
+                  </span>
+                  {player.isAI && (
+                    <span className="text-[6px] px-1 bg-blue-500/20 rounded border border-blue-500/30 uppercase">
+                      {settings.difficulty}
+                    </span>
+                  )}
+                </div>
+                <div className="text-[9px] text-emerald-300 font-black">{player.score} pts</div>
+              </div>
+            </div>
+          );
+        })}
+        </div>
+
+        {/* Center Area */}
+        <div className="flex-1 flex items-center justify-center gap-6 sm:gap-12 relative min-h-[200px]">
+          {/* Black Joker Target (Ultimate Mode) */}
+          {settings.mode === 'ultimate' && gameState.blackJokerTargetCard && (
+            <div className="absolute left-0 sm:left-8 top-1/2 -translate-y-1/2 flex flex-col items-center bg-purple-900/40 p-2 sm:p-4 rounded-2xl border border-purple-500/30 backdrop-blur-sm scale-75 sm:scale-100">
+              <div className="text-[8px] sm:text-[10px] uppercase font-black text-purple-300 mb-2 tracking-widest">Target</div>
+              <div className="scale-75 sm:scale-90 shadow-2xl">
+                <Card card={gameState.blackJokerTargetCard} isFaceUp={true} noHover />
+              </div>
+            </div>
+          )}
+
+          {/* Draw Pile */}
+          <div ref={drawPileRef} className="relative group scale-90 sm:scale-100">
+            {/* Stack effect */}
+            {Array.from({ length: Math.min(5, Math.ceil(gameState.drawPile.length / 10)) }).map((_, i) => (
+              <div 
+                key={`draw-stack-${i}`}
+                className="absolute inset-0 bg-blue-950 rounded-xl border border-white/10 shadow-sm"
+                style={{ transform: `translate(${-i * 1.5}px, ${-i * 1.5}px)`, zIndex: -i }}
+              />
+            ))}
+            
+            <Card 
+              card={{ id: 'draw', suit: 'spades', rank: 'A' }} 
+              isFaceUp={false} 
+              onClick={handleDraw}
+              className={isHumanTurn && gameState.drawStackCount === 0 && !isDrawing ? "hover:shadow-blue-500/50" : ""}
+            />
+            {isDrawing && drawTarget && (
+              <motion.div
+                initial={{ x: 0, y: 0, opacity: 1, rotate: 0 }}
+                animate={{ 
+                  x: drawTarget.x, 
+                  y: drawTarget.y, 
+                  opacity: 0,
+                  scale: 0.5,
+                  rotate: 20
+                }}
+                transition={{ duration: 0.5, ease: "circOut" }}
+                className="absolute inset-0 z-[50] pointer-events-none"
+              >
+                <Card card={{ id: 'anim', suit: 'spades', rank: 'A' }} isFaceUp={false} />
+              </motion.div>
+            )}
+            {gameState.drawStackCount > 0 && (
+              <div className="absolute -top-4 -right-4 bg-red-600 text-white w-8 h-8 rounded-full flex items-center justify-center font-black shadow-lg animate-bounce z-20">
+                +{gameState.drawStackCount}
+              </div>
+            )}
+            <div className="absolute -bottom-6 left-0 right-0 text-center text-[10px] font-bold uppercase opacity-50">Draw ({gameState.drawPile.length})</div>
+          </div>
+
+          {/* Discard Pile */}
+          <div ref={discardPileRef} className="relative scale-90 sm:scale-100">
+            {/* Stack effect */}
+            {Array.from({ length: Math.min(5, Math.ceil(gameState.discardPile.length / 10)) }).map((_, i) => (
+              <div 
+                key={`discard-stack-${i}`}
+                className="absolute inset-0 bg-slate-200 rounded-xl border border-slate-300 shadow-sm"
+                style={{ transform: `translate(${i * 1.5}px, ${i * 1.5}px)`, zIndex: -i }}
+              />
+            ))}
+
+            <AnimatePresence mode="popLayout">
+              <Card 
+                key={gameState.discardPile[0].id}
+                card={gameState.discardPile[0]} 
+                isCurrent
+                noHover
+                className="z-10"
+              />
+            </AnimatePresence>
+
+            {/* Play Animation */}
+            <AnimatePresence>
+              {aiPlayAnimation && (
+                <motion.div
+                  initial={{ 
+                    x: aiPlayAnimation.start.x, 
+                    y: aiPlayAnimation.start.y, 
+                    opacity: 1, 
+                    scale: 1,
+                    rotate: Math.random() * 20 - 10
+                  }}
+                  animate={{ x: 0, y: 0, opacity: 1, scale: 1, rotate: 0 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.4, ease: "circOut" }}
+                  className="absolute inset-0 z-[60] pointer-events-none"
+                >
+                  <Card card={aiPlayAnimation.card} isFaceUp={true} noHover />
                 </motion.div>
               )}
+            </AnimatePresence>
 
-              <div className="absolute bottom-0 left-0 right-0 bg-black/40 text-[8px] text-center py-0.5 font-bold uppercase">Cards</div>
+            <div className="absolute -bottom-6 left-0 right-0 text-center text-[10px] font-bold uppercase opacity-50">Discard ({gameState.discardPile.length})</div>
+            
+            {/* Current Suit Indicator */}
+            <div className="absolute -right-12 sm:-right-16 top-1/2 -translate-y-1/2 flex flex-col items-center">
+               <div className="text-[8px] uppercase font-black opacity-50 mb-1">Suit</div>
+               <div className={`text-2xl sm:text-3xl ${gameState.currentSuit === 'hearts' || gameState.currentSuit === 'diamonds' ? 'text-red-500' : 'text-slate-900'}`}>
+                  {gameState.currentSuit === 'hearts' && '♥'}
+                  {gameState.currentSuit === 'diamonds' && '♦'}
+                  {gameState.currentSuit === 'clubs' && '♣'}
+                  {gameState.currentSuit === 'spades' && '♠'}
+               </div>
             </div>
-            <div className="mt-2 text-center">
-              <div className="text-[10px] font-bold truncate w-20 flex flex-col items-center">
-                <span className="flex items-center gap-1">
-                  {player.name}
-                  {idx === 0 && settings.playMode === 'computer' && <span className="text-[8px] text-blue-400">(You)</span>}
+          </div>
+        </div>
+
+        {/* Action Message */}
+        <div className="h-10 flex items-center justify-center mb-2 shrink-0">
+          <AnimatePresence mode="wait">
+            <motion.div 
+              key={isAiThinking ? 'thinking' : gameState.lastActionMessage}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="bg-black/30 px-4 py-1.5 rounded-full text-xs sm:text-sm font-medium border border-white/10"
+            >
+              {isAiThinking ? (
+                <span className="flex items-center gap-2 text-blue-300">
+                  <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
+                  {currentPlayer.name} is thinking...
                 </span>
-                {player.isAI && (
-                  <span className="text-[7px] px-1 bg-blue-500/20 rounded border border-blue-500/30 uppercase">
-                    {settings.difficulty}
-                  </span>
-                )}
-              </div>
-              <div className="text-[10px] text-emerald-300 font-black">{player.score} pts</div>
-            </div>
-          </div>
-        );
-      })}
-      </div>
-
-      {/* Center Area */}
-      <div className="flex-1 flex items-center justify-center gap-12 relative">
-        {/* Black Joker Target (Ultimate Mode) */}
-        {settings.mode === 'ultimate' && gameState.blackJokerTargetCard && (
-          <div className="absolute left-8 top-1/2 -translate-y-1/2 flex flex-col items-center bg-purple-900/40 p-4 rounded-2xl border border-purple-500/30 backdrop-blur-sm">
-            <div className="text-[10px] uppercase font-black text-purple-300 mb-2 tracking-widest">Joker Target</div>
-            <div className="scale-90 shadow-2xl">
-              <Card card={gameState.blackJokerTargetCard} isFaceUp={true} />
-            </div>
-            <div className="mt-2 text-[8px] text-purple-200/60 font-bold text-center max-w-[80px]">
-              Play Black Joker only on this card
-            </div>
-          </div>
-        )}
-
-        {/* Draw Pile */}
-        <div className="relative group">
-          <Card 
-            card={{ id: 'draw', suit: 'spades', rank: 'A' }} 
-            isFaceUp={false} 
-            onClick={handleDraw}
-            className={isHumanTurn && gameState.drawStackCount === 0 && !isDrawing ? "hover:shadow-blue-500/50" : ""}
-          />
-          {isDrawing && (
-            <motion.div
-              initial={{ x: 0, y: 0, opacity: 1, rotate: 0 }}
-              animate={{ 
-                x: 0, 
-                y: 250, 
-                opacity: 0,
-                scale: 0.5,
-                rotate: 20
-              }}
-              transition={{ duration: 0.4, ease: "easeIn" }}
-              className="absolute inset-0 z-[50]"
-            >
-              <Card card={{ id: 'anim', suit: 'spades', rank: 'A' }} isFaceUp={false} />
+              ) : (
+                gameState.lastActionMessage
+              )}
             </motion.div>
-          )}
-          {gameState.drawStackCount > 0 && (
-            <div className="absolute -top-4 -right-4 bg-red-600 text-white w-8 h-8 rounded-full flex items-center justify-center font-black shadow-lg animate-bounce">
-              +{gameState.drawStackCount}
-            </div>
-          )}
-          <div className="absolute -bottom-6 left-0 right-0 text-center text-[10px] font-bold uppercase opacity-50">Draw</div>
-        </div>
-
-        {/* Discard Pile */}
-        <div className="relative">
-          <AnimatePresence mode="popLayout">
-            <Card 
-              key={gameState.discardPile[0].id}
-              card={gameState.discardPile[0]} 
-              isCurrent
-              className="z-10"
-            />
           </AnimatePresence>
-          <div className="absolute -bottom-6 left-0 right-0 text-center text-[10px] font-bold uppercase opacity-50">Discard</div>
-          
-          {/* Current Suit Indicator */}
-          <div className="absolute -right-16 top-1/2 -translate-y-1/2 flex flex-col items-center">
-             <div className="text-[8px] uppercase font-black opacity-50 mb-1">Suit</div>
-             <div className={`text-3xl ${gameState.currentSuit === 'hearts' || gameState.currentSuit === 'diamonds' ? 'text-red-500' : 'text-slate-900'}`}>
-                {gameState.currentSuit === 'hearts' && '♥'}
-                {gameState.currentSuit === 'diamonds' && '♦'}
-                {gameState.currentSuit === 'clubs' && '♣'}
-                {gameState.currentSuit === 'spades' && '♠'}
-             </div>
-          </div>
         </div>
 
-        {/* Direction Indicator */}
-        <div className={`absolute top-0 left-1/2 -translate-x-1/2 transition-transform duration-1000 ${gameState.direction === -1 ? 'rotate-180' : ''}`}>
-           <RotateCcw className="text-white/20" size={120} />
-        </div>
-      </div>
-
-      {/* Action Message */}
-      <div className="h-12 flex items-center justify-center mb-4">
-        <AnimatePresence mode="wait">
-          <motion.div 
-            key={isAiThinking ? 'thinking' : gameState.lastActionMessage}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="bg-black/30 px-6 py-2 rounded-full text-sm font-medium border border-white/10"
-          >
-            {isAiThinking ? (
-              <span className="flex items-center gap-2 text-blue-300">
-                <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
-                {currentPlayer.name} is thinking...
-              </span>
-            ) : (
-              gameState.lastActionMessage
-            )}
-          </motion.div>
-        </AnimatePresence>
-      </div>
-
-      {/* Player Hand */}
-      <div className="relative pb-8">
-        <div className="flex justify-center items-end -space-x-8 px-12 h-48 overflow-x-auto no-scrollbar">
-          {currentPlayer.hand.map((card, idx) => (
-            <Card 
-              key={card.id}
-              card={card}
-              isPlayable={isHumanTurn && !showTurnTransition && isValidMove(card, gameState, settings).valid}
-              onClick={() => handleCardClick(card.id)}
-              className="transition-transform hover:z-50"
-            />
-          ))}
-        </div>
-        
-        <div className="absolute bottom-0 left-1/2 -translate-x-1/2 flex items-center gap-4">
-          <div className="px-4 py-1 bg-emerald-800 rounded-full border border-white/20 flex items-center gap-2">
-            <span className="text-xs font-bold uppercase tracking-widest">{currentPlayer.name} Score:</span>
-            <span className="text-lg font-black text-yellow-400">{currentPlayer.score}</span>
-          </div>
-          {currentPlayer.hand.length === 2 && !currentPlayer.hasDeclaredLastCard && isHumanTurn && (
-            <button 
-              onClick={handleDeclareLastCard}
-              className="px-4 py-1 bg-orange-500 hover:bg-orange-400 rounded-full font-black text-xs uppercase shadow-lg transition-all"
-            >
-              Declare Last Card
-            </button>
-          )}
-          {currentPlayer.hasDeclaredLastCard && currentPlayer.hand.length <= 2 && (
-            <div className="px-4 py-1 bg-blue-600 rounded-full font-black text-xs uppercase">
-              Last Card Declared
+        {/* Player Hand - Fixed to bottom */}
+        <div className="fixed bottom-0 left-0 right-0 bg-black/40 backdrop-blur-md border-t border-white/10 pt-4 pb-8 z-50">
+          <div className="max-w-5xl mx-auto relative">
+            <div className="flex justify-center items-end -space-x-8 sm:-space-x-10 px-4 h-32 sm:h-40 overflow-x-auto no-scrollbar">
+              {displayPlayer.hand.map((card, idx) => (
+                <Card 
+                  key={card.id}
+                  card={card}
+                  isPlayable={isHumanTurn && !showTurnTransition && isValidMove(card, gameState, settings).valid}
+                  onClick={() => handleCardClick(card.id)}
+                  className="transition-transform hover:z-50 scale-90 sm:scale-100 origin-bottom"
+                />
+              ))}
             </div>
-          )}
+            
+            <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 flex items-center gap-2 sm:gap-4 w-full justify-center px-4">
+              <div className="px-3 py-0.5 sm:px-4 sm:py-1 bg-emerald-800 rounded-full border border-white/20 flex items-center gap-2 whitespace-nowrap shadow-lg">
+                <span className="text-[10px] sm:text-xs font-bold uppercase tracking-widest">{displayPlayer.name} Score:</span>
+                <span className="text-sm sm:text-lg font-black text-yellow-400">{displayPlayer.score}</span>
+              </div>
+              {displayPlayer.hand.length === 2 && !displayPlayer.hasDeclaredLastCard && isHumanTurn && (
+                <button 
+                  onClick={handleDeclareLastCard}
+                  className="px-3 py-1 sm:px-4 sm:py-1 bg-orange-500 hover:bg-orange-400 rounded-full font-black text-[10px] sm:text-xs uppercase shadow-lg transition-all whitespace-nowrap"
+                >
+                  Last Card!
+                </button>
+              )}
+              {displayPlayer.hasDeclaredLastCard && displayPlayer.hand.length <= 2 && (
+                <div className="px-3 py-1 sm:px-4 sm:py-1 bg-blue-600 rounded-full font-black text-[10px] sm:text-xs uppercase whitespace-nowrap shadow-lg">
+                  Declared
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
