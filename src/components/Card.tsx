@@ -44,10 +44,11 @@ export function Card({ card, onClick, isFaceUp = true, className, isPlayable, is
   if (!isFaceUp) {
     return (
       <motion.div
+        layoutId={card.id}
         whileHover={noHover ? {} : { y: -20, scale: 1.05 }}
         onClick={onClick}
         className={cn(
-          "relative w-24 h-36 rounded-xl border-2 border-white shadow-lg cursor-pointer bg-blue-800 overflow-hidden",
+          "relative w-20 h-30 sm:w-24 sm:h-36 rounded-xl border-2 border-white shadow-lg cursor-pointer bg-blue-800",
           className
         )}
       >
@@ -66,20 +67,20 @@ export function Card({ card, onClick, isFaceUp = true, className, isPlayable, is
       animate={isCurrent ? { scale: 1.05, boxShadow: "0 0 20px rgba(255,255,255,0.5)" } : {}}
       onClick={isPlayable ? onClick : undefined}
       className={cn(
-        "relative w-24 h-36 bg-white rounded-xl border-2 shadow-xl flex flex-col p-2 select-none",
+        "relative w-20 h-30 sm:w-24 sm:h-36 bg-white rounded-lg sm:rounded-xl border sm:border-2 shadow-xl flex flex-col p-1 sm:p-2 select-none",
         isPlayable ? "cursor-pointer border-blue-400" : "border-slate-200",
-        isCurrent && "border-yellow-400 border-4",
+        isCurrent && "border-yellow-400 border-2 sm:border-4",
         className
       )}
     >
       <div className={cn("flex justify-between items-start leading-none", colorClass)}>
         <div className="flex flex-col items-center">
-          <span className="text-lg font-bold">{displayRank}</span>
-          <span className="text-sm">{symbol}</span>
+          <span className="text-sm sm:text-lg font-bold">{displayRank}</span>
+          <span className="text-xs sm:text-sm">{symbol}</span>
         </div>
       </div>
 
-      <div className={cn("flex-1 flex items-center justify-center text-4xl", colorClass)}>
+      <div className={cn("flex-1 flex items-center justify-center text-3xl sm:text-4xl", colorClass)}>
         {card.isJoker && !card.transformedToRank ? (
           <span className={card.jokerType === 'red' ? 'text-red-600' : 'text-slate-900'}>🃏</span>
         ) : (
@@ -89,8 +90,8 @@ export function Card({ card, onClick, isFaceUp = true, className, isPlayable, is
 
       <div className={cn("flex justify-between items-end leading-none rotate-180", colorClass)}>
         <div className="flex flex-col items-center">
-          <span className="text-lg font-bold">{displayRank}</span>
-          <span className="text-sm">{symbol}</span>
+          <span className="text-sm sm:text-lg font-bold">{displayRank}</span>
+          <span className="text-xs sm:text-sm">{symbol}</span>
         </div>
       </div>
       

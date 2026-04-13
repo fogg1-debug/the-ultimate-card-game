@@ -4,6 +4,7 @@
  */
 
 import React, { useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { Menu } from './components/Menu';
 import { GameBoard } from './components/GameBoard';
 import { GameState, GameSettings } from './types';
@@ -42,16 +43,36 @@ export default function App() {
     setSettings(null);
   };
 
-  if (!gameState || !settings) {
-    return <Menu onStart={handleStartGame} />;
-  }
-
   return (
-    <GameBoard 
-      gameState={gameState} 
-      settings={settings} 
-      onUpdate={handleUpdateGame}
-      onRestart={handleRestart}
-    />
+    <div className="min-h-screen bg-slate-950">
+      <AnimatePresence mode="wait">
+        {!gameState || !settings ? (
+          <motion.div
+            key="menu"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+          >
+            <Menu onStart={handleStartGame} />
+          </motion.div>
+        ) : (
+          <motion.div
+            key="game"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+          >
+            <GameBoard 
+              gameState={gameState} 
+              settings={settings} 
+              onUpdate={handleUpdateGame}
+              onRestart={handleRestart}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }

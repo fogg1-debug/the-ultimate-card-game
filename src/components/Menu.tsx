@@ -76,44 +76,80 @@ export function Menu({ onStart }: MenuProps) {
 
   const handleOnlineClick = async () => {
     setPlayMode('online');
-    if (!user) {
+    setOnlineView('main');
+    if (!auth.currentUser) {
       setIsLoading(true);
       try {
         await signInAnonymously(auth);
       } catch (err) {
         console.error("Auth failed", err);
+      } finally {
+        setIsLoading(false);
       }
-      setIsLoading(false);
     }
   };
 
   const hostLobby = async () => {
-    if (!user) return;
+    if (!auth.currentUser) return;
     setIsLoading(true);
-    const lobbyData = {
-      hostId: user.uid,
-      hostName: `Player ${user.uid.slice(0, 4)}`,
-      status: 'waiting',
-      settings: { mode, playMode: 'online', difficulty, numDecks, startingScore, cardsPerPlayer },
-      players: [{ id: user.uid, name: `Player ${user.uid.slice(0, 4)}`, isHost: true }],
-      createdAt: serverTimestamp(),
-    };
-    const docRef = await addDoc(collection(db, 'lobbies'), lobbyData);
-    setCurrentLobby({ id: docRef.id, ...lobbyData });
-    setOnlineView('lobby');
-    setIsLoading(false);
+    try {
+      const lobbyData = {
+        hostId: auth.currentUser.uid,
+        hostName: `Player ${auth.currentUser.uid.slice(0, 4)}`,
+        status: 'waiting',
+        settings: { mode, playMode: 'online', difficulty, numDecks, startingScore, cardsPerPlayer },
+        players: [{ id: auth.currentUser.uid, name: `Player ${auth.currentUser.uid.slice(0, 4)}`, isHost: true }],
+        createdAt: serverTimestamp(),
+      };
+      const docRef = await addDoc(collection(db, 'lobbies'), lobbyData);
+      setCurrentLobby({ id: docRef.id, ...lobbyData });
+      setOnlineView('lobby');
+    } catch (err) {
+      console.error("Failed to host lobby", err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const joinLobby = async (lobby: any) => {
-    if (!user) return;
-    if (lobby.players.length >= 4) return;
+    if (!auth.currentUser) return;
+    if (lobby.players.length >= 4) {
+      alert("Lobby is full");
+      return;
+    }
     
-    const updatedPlayers = [...lobby.players, { id: user.uid, name: `Player ${user.uid.slice(0, 4)}`, isHost: false }];
-    await updateDoc(doc(db, 'lobbies', lobby.id), {
-      players: updatedPlayers
-    });
-    setCurrentLobby({ ...lobby, players: updatedPlayers });
+    // Check if I'm already in the lobby
+    const isAlreadyIn = lobby.players.some((p: any) => p.id === auth.currentUser?.uid);
+    
+    if (!isAlreadyIn) {
+      const updatedPlayers = [...lobby.players, { id: auth.currentUser.uid, name: `Player ${auth.currentUser.uid.slice(0, 4)}`, isHost: false }];
+      await updateDoc(doc(db, 'lobbies', lobby.id), {
+        players: updatedPlayers
+      });
+      setCurrentLobby({ ...lobby, players: updatedPlayers });
+    } else {
+      setCurrentLobby(lobby);
+    }
+    
     setOnlineView('lobby');
+  };
+
+  const joinLobbyById = async () => {
+    if (!lobbyIdInput.trim() || !auth.currentUser) return;
+    setIsLoading(true);
+    try {
+      const lobbyDoc = await getDocs(query(collection(db, 'lobbies'), where('status', '==', 'waiting')));
+      const lobby = lobbyDoc.docs.find(d => d.id.toLowerCase().startsWith(lobbyIdInput.toLowerCase()));
+      if (lobby) {
+        await joinLobby({ id: lobby.id, ...lobby.data() });
+      } else {
+        alert("Lobby not found");
+      }
+    } catch (err) {
+      console.error("Join by ID failed", err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const startGameOnline = async () => {
@@ -224,7 +260,6 @@ export function Menu({ onStart }: MenuProps) {
                       }`}
                     >
                       <div className="font-black text-lg italic">CLASSIC</div>
-                      <div className="text-[10px] font-bold opacity-60">BLUE CARD</div>
                     </button>
                     <button
                       onClick={() => { setMode('ultimate'); setPlayMode('computer'); }}
@@ -235,12 +270,11 @@ export function Menu({ onStart }: MenuProps) {
                       }`}
                     >
                       <div className="font-black text-lg italic">ULTIMATE</div>
-                      <div className="text-[10px] font-bold opacity-60">PURPLE CARD</div>
                     </button>
                   </div>
 
                   {/* Online Toggle */}
-                  <button
+                    <button
                     onClick={handleOnlineClick}
                     className={`w-full p-4 rounded-2xl border-2 flex items-center justify-between transition-all ${
                       playMode === 'online'
@@ -252,7 +286,6 @@ export function Menu({ onStart }: MenuProps) {
                       <Globe size={20} className={playMode === 'online' ? 'text-red-400' : 'text-white/40'} />
                       <div className="text-left">
                         <div className="font-black italic">ONLINE LOBBY</div>
-                        <div className="text-[10px] font-bold opacity-60 text-red-400">RED CARD</div>
                       </div>
                     </div>
                     <div className="px-2 py-1 bg-red-500/20 rounded text-[10px] font-black text-red-400">NEW</div>
@@ -299,6 +332,67 @@ export function Menu({ onStart }: MenuProps) {
                         ))}
                       </div>
                     </div>
+
+                    {mode === 'classic' ? (
+                      <div className="flex items-center justify-between text-white/80">
+                        <div className="flex items-center gap-2">
+                          <Layers size={16} className="text-white/40" />
+                          <span className="text-xs font-black uppercase tracking-wider">Cards</span>
+                        </div>
+                        <div className="flex gap-1.5">
+                          {[4, 7].map(n => (
+                            <button
+                              key={n}
+                              onClick={() => setCardsPerPlayer(n)}
+                              className={`w-8 h-8 rounded-lg text-xs font-black transition-all ${
+                                cardsPerPlayer === n ? 'bg-white text-slate-900' : 'bg-white/5 text-white/40 hover:bg-white/10'
+                              }`}
+                            >
+                              {n}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-white text-[10px] font-black uppercase">
+                            <div className="flex items-center gap-2">
+                              <Layers size={14} className="text-white/40" />
+                              <span>Cards Dealt</span>
+                            </div>
+                            <span className="text-purple-400">{cardsPerPlayer}</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="4"
+                            max="12"
+                            step="1"
+                            value={cardsPerPlayer}
+                            onChange={(e) => setCardsPerPlayer(parseInt(e.target.value))}
+                            className="w-full accent-purple-500"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-white text-[10px] font-black uppercase">
+                            <div className="flex items-center gap-2">
+                              <Plus size={14} className="text-white/40" />
+                              <span>Starting Score</span>
+                            </div>
+                            <span className="text-purple-400">{startingScore}</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="50"
+                            max="300"
+                            step="10"
+                            value={startingScore}
+                            onChange={(e) => setStartingScore(parseInt(e.target.value))}
+                            className="w-full accent-purple-500"
+                          />
+                        </div>
+                      </div>
+                    )}
 
                     <div className="flex items-center justify-between text-white/80">
                       <div className="flex items-center gap-2">
@@ -385,20 +479,37 @@ export function Menu({ onStart }: MenuProps) {
                         </div>
 
                         {mode === 'ultimate' && (
-                          <div className="space-y-2">
-                            <div className="flex justify-between text-white text-[10px] font-black uppercase">
-                              <span>Starting Score</span>
-                              <span className="text-red-400">{startingScore}</span>
+                          <div className="space-y-4">
+                            <div className="space-y-2">
+                              <div className="flex justify-between text-white text-[10px] font-black uppercase">
+                                <span>Starting Score</span>
+                                <span className="text-red-400">{startingScore}</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="50"
+                                max="300"
+                                step="10"
+                                value={startingScore}
+                                onChange={(e) => setStartingScore(parseInt(e.target.value))}
+                                className="w-full accent-red-500"
+                              />
                             </div>
-                            <input
-                              type="range"
-                              min="50"
-                              max="500"
-                              step="10"
-                              value={startingScore}
-                              onChange={(e) => setStartingScore(parseInt(e.target.value))}
-                              className="w-full accent-red-500"
-                            />
+                            <div className="space-y-2">
+                              <div className="flex justify-between text-white text-[10px] font-black uppercase">
+                                <span>Cards Dealt</span>
+                                <span className="text-red-400">{cardsPerPlayer}</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="4"
+                                max="12"
+                                step="1"
+                                value={cardsPerPlayer}
+                                onChange={(e) => setCardsPerPlayer(parseInt(e.target.value))}
+                                className="w-full accent-red-500"
+                              />
+                            </div>
                           </div>
                         )}
                       </div>
@@ -418,11 +529,32 @@ export function Menu({ onStart }: MenuProps) {
                     <div className="space-y-4">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2 text-red-400 font-black italic">
-                          <LogIn size={18} /> ACTIVE LOBBIES
+                          <LogIn size={18} /> JOIN GAME
                         </div>
                         <button onClick={() => setOnlineView('main')} className="text-white/40 text-[10px] font-black uppercase">Back</button>
                       </div>
-                      <div className="space-y-2 max-h-[300px] overflow-y-auto no-scrollbar">
+
+                      <div className="flex gap-2">
+                        <input 
+                          type="text"
+                          placeholder="Enter Lobby ID..."
+                          value={lobbyIdInput}
+                          onChange={(e) => setLobbyIdInput(e.target.value)}
+                          className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white text-sm font-bold focus:outline-none focus:border-red-400/50"
+                        />
+                        <button 
+                          onClick={joinLobbyById}
+                          disabled={isLoading}
+                          className="bg-red-500 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-red-400 disabled:opacity-50"
+                        >
+                          JOIN
+                        </button>
+                      </div>
+
+                      <div className="h-px bg-white/5 my-2" />
+
+                      <div className="text-[10px] font-black text-white/20 uppercase tracking-widest">Available Lobbies</div>
+                      <div className="space-y-2 max-h-[200px] overflow-y-auto no-scrollbar">
                         {lobbies.length === 0 ? (
                           <div className="py-12 text-center text-white/20 font-black italic">NO LOBBIES FOUND</div>
                         ) : (
@@ -448,7 +580,8 @@ export function Menu({ onStart }: MenuProps) {
                     <div className="space-y-6">
                       <div className="text-center">
                         <div className="text-red-400 font-black italic text-sm mb-1 tracking-widest">LOBBY READY</div>
-                        <div className="text-white font-black text-2xl italic">{currentLobby.id.slice(0, 6).toUpperCase()}</div>
+                        <div className="text-white font-black text-2xl italic mb-1">{currentLobby.id.slice(0, 6).toUpperCase()}</div>
+                        <div className="text-[8px] text-white/30 font-bold uppercase tracking-[0.3em]">Share this ID with friends</div>
                       </div>
                       <div className="space-y-2">
                         <div className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-2">Players Joined</div>
@@ -468,14 +601,30 @@ export function Menu({ onStart }: MenuProps) {
                         ))}
                       </div>
                       {currentLobby.hostId === user?.uid ? (
-                        <button
-                          onClick={startGameOnline}
-                          className="w-full py-4 bg-white text-slate-900 rounded-2xl font-black italic text-lg shadow-xl hover:bg-red-50 transition-colors"
-                        >
-                          START SESSION
-                        </button>
+                        <div className="space-y-2">
+                          <button
+                            onClick={startGameOnline}
+                            className="w-full py-4 bg-white text-slate-900 rounded-2xl font-black italic text-lg shadow-xl hover:bg-red-50 transition-colors"
+                          >
+                            START SESSION
+                          </button>
+                          <button 
+                            onClick={() => { setCurrentLobby(null); setOnlineView('main'); }}
+                            className="w-full text-white/20 text-[10px] font-black uppercase hover:text-white/40 transition-colors"
+                          >
+                            Cancel Lobby
+                          </button>
+                        </div>
                       ) : (
-                        <div className="text-center py-4 text-white/40 font-black italic animate-pulse">WAITING FOR HOST...</div>
+                        <div className="space-y-4">
+                          <div className="text-center py-4 text-white/40 font-black italic animate-pulse">WAITING FOR HOST...</div>
+                          <button 
+                            onClick={() => { setCurrentLobby(null); setOnlineView('main'); }}
+                            className="w-full text-white/20 text-[10px] font-black uppercase hover:text-white/40 transition-colors"
+                          >
+                            Leave Lobby
+                          </button>
+                        </div>
                       )}
                     </div>
                   )}

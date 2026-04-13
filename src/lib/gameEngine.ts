@@ -17,11 +17,28 @@ export function playCard(gameState: GameState, playerIndex: number, cardId: stri
     }
   }
 
-  // Handle Red Joker transformation
+  // Handle Joker transformation
   let finalCard = { ...card };
+  let newSuit = card.suit;
+  let newRank = card.rank;
+  let message = `${player.name} played ${card.rank} of ${card.suit}.`;
+
   if (card.rank === 'RJ') {
-    finalCard.transformedToRank = chosenRank || 'A';
-    finalCard.transformedToSuit = chosenSuit || 'hearts';
+    newSuit = chosenSuit || 'hearts';
+    newRank = chosenRank || 'A';
+    finalCard.transformedToRank = newRank;
+    finalCard.transformedToSuit = newSuit;
+    message = `${player.name} played Red Joker as ${newRank} of ${newSuit}!`;
+  } else if (card.rank === 'BJ') {
+    // Black Joker mimics the card beneath it
+    const cardBeneath = gameState.discardPile[0];
+    if (cardBeneath) {
+      newSuit = cardBeneath.transformedToSuit || cardBeneath.suit;
+      newRank = cardBeneath.transformedToRank || cardBeneath.rank;
+      finalCard.transformedToRank = newRank;
+      finalCard.transformedToSuit = newSuit;
+    }
+    message = `${player.name} played Black Joker! It mimics ${newRank} of ${newSuit}.`;
   }
 
   // Remove card from hand
@@ -33,23 +50,23 @@ export function playCard(gameState: GameState, playerIndex: number, cardId: stri
 
   // Update discard pile and current state
   const newDiscardPile = [finalCard, ...gameState.discardPile];
-  let newSuit = finalCard.transformedToSuit || finalCard.suit;
-  let newRank = finalCard.transformedToRank || finalCard.rank;
   let newDrawStackCount = gameState.drawStackCount;
   let newDirection = gameState.direction;
   let skipNext = false;
-  let message = `${player.name} played ${finalCard.rank === 'RJ' ? 'Red Joker' : finalCard.rank} of ${finalCard.suit}.`;
 
-  // Handle Special Cards
+  // Handle Special Cards (based on newRank/newSuit)
   if (newRank === '2') {
     newDrawStackCount += 2;
     message = `${player.name} played a 2! Next player must play a 2 or draw ${newDrawStackCount}.`;
+    if (card.rank === 'RJ') message = `${player.name} played Red Joker as a 2! Next player must play a 2 or draw ${newDrawStackCount}.`;
   } else if (newRank === '8') {
     skipNext = true;
     message = `${player.name} played an 8! Next player skips a turn.`;
+    if (card.rank === 'RJ') message = `${player.name} played Red Joker as an 8! Next player skips a turn.`;
   } else if (newRank === 'J') {
     newDirection = (gameState.direction === 1 ? -1 : 1) as 1 | -1;
     message = `${player.name} played a Jack! Direction reversed.`;
+    if (card.rank === 'RJ') message = `${player.name} played Red Joker as a Jack! Direction reversed.`;
     // In 2 player game, Jack acts like a skip
     if (gameState.players.length === 2) {
       skipNext = true;
@@ -57,18 +74,7 @@ export function playCard(gameState: GameState, playerIndex: number, cardId: stri
   } else if (newRank === 'A') {
     newSuit = chosenSuit || newSuit;
     message = `${player.name} played an Ace and changed suit to ${newSuit}.`;
-  }
-
-  if (card.rank === 'RJ') {
-    message = `${player.name} played Red Joker as ${newRank} of ${newSuit}!`;
-  } else if (card.rank === 'BJ') {
-    // Black Joker maintains suit and rank of the card beneath it
-    const cardBeneath = gameState.discardPile[0];
-    if (cardBeneath) {
-      newSuit = cardBeneath.transformedToSuit || cardBeneath.suit;
-      newRank = cardBeneath.transformedToRank || cardBeneath.rank;
-    }
-    message = `${player.name} played Black Joker! It mimics ${newRank} of ${newSuit}.`;
+    if (card.rank === 'RJ') message = `${player.name} played Red Joker as an Ace! Suit changed to ${newSuit}.`;
   }
 
   // Check for Last Card rule
